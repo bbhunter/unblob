@@ -1,15 +1,16 @@
-"""
-Searching Chunk related functions.
+"""Searching Chunk related functions.
+
 The main "entry point" is search_chunks_by_priority.
 """
+
 from functools import lru_cache
-from typing import List, Optional
+from typing import Optional
 
 import attr
 from pyperscan import Flag, Pattern, Scan, StreamDatabase
 from structlog import get_logger
 
-from .file_utils import InvalidInputFormat, SeekError, stream_scan
+from .file_utils import DEFAULT_BUFSIZE, InvalidInputFormat, SeekError
 from .handlers import Handlers
 from .models import File, Handler, TaskResult, ValidChunk
 from .parser import InvalidHexString
@@ -22,14 +23,14 @@ logger = get_logger()
 class HyperscanMatchContext:
     file: File
     file_size: int
-    all_chunks: List
+    all_chunks: list
     task_result: TaskResult
+    start_offset: int
 
 
 def _calculate_chunk(
     handler: Handler, file: File, real_offset, task_result: TaskResult
 ) -> Optional[ValidChunk]:
-
     file.seek(real_offset)
     try:
         return handler.calculate_chunk(file, real_offset)
@@ -69,6 +70,8 @@ def _calculate_chunk(
 def _hyperscan_match(
     context: HyperscanMatchContext, handler: Handler, offset: int, end: int
 ) -> Scan:
+    del end  # unused argument
+    offset += context.start_offset
     real_offset = offset + handler.PATTERN_MATCH_OFFSET
 
     if real_offset < 0:
@@ -90,6 +93,7 @@ def _hyperscan_match(
         start_offset=offset,
         real_offset=real_offset,
         _verbosity=2,
+        handler=handler.NAME,
     )
 
     chunk = _calculate_chunk(handler, context.file, real_offset, context.task_result)
@@ -103,27 +107,37 @@ def _hyperscan_match(
         return Scan.Continue
 
     chunk.handler = handler
-    logger.debug("Found valid chunk", chunk=chunk, handler=handler.NAME, _verbosity=2)
+    logger.debug("Found valid chunk", chunk=chunk, handler=handler.NAME, _verbosity=1)
     context.all_chunks.append(chunk)
+    context.start_offset = chunk.end_offset
 
-    # Terminate scan if we match till the end of the file
-    if chunk.end_offset == context.file_size:
-        logger.debug("Chunk covers till end of the file", chunk=chunk)
-        return Scan.Terminate
-
-    return Scan.Continue
+    return Scan.Terminate
 
 
-def search_chunks(  # noqa: C901
+def stream_scan_chunks(scanner, file: File, context: HyperscanMatchContext):
+    """Scan the whole file by increment of DEFAULT_BUFSIZE using Hyperscan's streaming mode."""
+    i = context.start_offset
+    with memoryview(file) as data:
+        while i < file.size():
+            if scanner.scan(data[i : i + DEFAULT_BUFSIZE]) == Scan.Terminate:
+                scanner.reset()
+                i = context.start_offset
+            else:
+                i += DEFAULT_BUFSIZE
+
+
+def search_chunks(
     file: File,
     file_size: int,
     handlers: Handlers,
     task_result: TaskResult,
-) -> List[ValidChunk]:
+) -> list[ValidChunk]:
     """Search all ValidChunks within the file.
-    Search for patterns and run Handler.calculate_chunk() on the found matches.
-    We don't deal with offset within already found ValidChunks and invalid chunks are thrown away.
-    If chunk covers the whole file we stop any further search and processing.
+
+    Search for patterns and run Handler.calculate_chunk() on the found
+    matches.  We don't deal with offset within already found
+    ValidChunks and invalid chunks are thrown away.  If chunk covers
+    the whole file we stop any further search and processing.
     """
     all_chunks = []
 
@@ -134,12 +148,13 @@ def search_chunks(  # noqa: C901
         file_size=file_size,
         all_chunks=all_chunks,
         task_result=task_result,
+        start_offset=0,
     )
 
-    scanner = hyperscan_db.build(hyperscan_context, _hyperscan_match)
+    scanner = hyperscan_db.build(hyperscan_context, _hyperscan_match)  # type: ignore
 
     try:
-        stream_scan(scanner, file)
+        stream_scan_chunks(scanner, file, hyperscan_context)
     except Exception as e:
         logger.error(
             "Error scanning for patterns",

@@ -24,12 +24,12 @@ class ZSTDHandler(Handler):
 
     PATTERNS = [HexString("28 B5 2F FD")]
 
-    EXTRACTOR = Command("zstd", "-d", "{inpath}", "-o", "{outdir}/{infile}")
+    EXTRACTOR = Command("zstd", "-d", "{inpath}", "-o", "{outdir}/zstd.uncompressed")
 
     def get_frame_header_size(self, frame_header_descriptor: int) -> int:
         single_segment = (frame_header_descriptor >> 5 & 1) & 0b1
         dictionary_id = frame_header_descriptor >> 0 & 0b11
-        frame_content_size = (frame_header_descriptor >> 6) & 0b1
+        frame_content_size = (frame_header_descriptor >> 6) & 0b11
         return (
             int(not single_segment)
             + DICT_ID_FIELDSIZE_MAP[dictionary_id]
@@ -38,7 +38,6 @@ class ZSTDHandler(Handler):
         )
 
     def calculate_chunk(self, file: File, start_offset: int) -> Optional[ValidChunk]:
-
         file.seek(start_offset, io.SEEK_SET)
         file.seek(MAGIC_LEN, io.SEEK_CUR)
 
@@ -46,10 +45,7 @@ class ZSTDHandler(Handler):
         frame_header_size = self.get_frame_header_size(frame_header_descriptor)
 
         content_checksum_flag = frame_header_descriptor >> 2 & 1
-        if content_checksum_flag:
-            content_checksum_size = 4
-        else:
-            content_checksum_size = 0
+        content_checksum_size = 4 if content_checksum_flag else 0
 
         unused_bit = frame_header_descriptor >> 4 & 1
         reserved_bit = frame_header_descriptor >> 3 & 1
@@ -62,9 +58,11 @@ class ZSTDHandler(Handler):
 
         last_block = False
         while not last_block:
-            block_header = int.from_bytes(
-                file.read(BLOCK_HEADER_LEN), byteorder="little"
-            )
+            block_header_val = file.read(BLOCK_HEADER_LEN)
+            # EOF
+            if not block_header_val:
+                raise InvalidInputFormat("Premature end of ZSTD stream.")
+            block_header = int.from_bytes(block_header_val, byteorder="little")
             last_block = block_header >> 0 & 0b1
             block_type = block_header >> 1 & 0b11
 

@@ -1,8 +1,12 @@
 import pytest
-from helpers import unhex
 
 from unblob.file_utils import File
-from unblob.handlers.archive.tar import TarHandler, _get_tar_end_offset
+from unblob.handlers.archive.tar import (
+    TarUnixHandler,
+    TarUstarHandler,
+    _get_tar_end_offset,
+)
+from unblob.testing import unhex
 
 GNU_TAR_CONTENTS = unhex(
     """\
@@ -120,6 +124,58 @@ POSIX_TAR_CONTENTS = unhex(
 """
 )
 
+UNIX_TAR_CONTENT = unhex(
+    """\
+00000000  66 72 75 69 74 73 2f 00  00 00 00 00 00 00 00 00  |fruits/.........|
+00000010  00 00 00 00 00 00 00 00  00 00 00 00 00 00 00 00  |................|
+*
+00000060  00 00 00 00 30 30 30 30  37 37 35 00 30 30 30 31  |....0000775.0001|
+00000070  37 35 30 00 30 30 30 31  37 35 30 00 30 30 30 30  |750.0001750.0000|
+00000080  30 30 30 30 30 30 30 00  31 34 35 30 34 32 36 32  |0000000.14504262|
+00000090  30 37 37 00 30 30 37 34  30 34 00 20 35 00 00 00  |077.007404. 5...|
+000000a0  00 00 00 00 00 00 00 00  00 00 00 00 00 00 00 00  |................|
+*
+00000140  00 00 00 00 00 00 00 00  00 30 30 30 30 30 30 30  |.........0000000|
+00000150  00 30 30 30 30 30 30 30  00 00 00 00 00 00 00 00  |.0000000........|
+00000160  00 00 00 00 00 00 00 00  00 00 00 00 00 00 00 00  |................|
+*
+00000200  66 72 75 69 74 73 2f 61  70 70 6c 65 2e 74 78 74  |fruits/apple.txt|
+00000210  00 00 00 00 00 00 00 00  00 00 00 00 00 00 00 00  |................|
+*
+00000260  00 00 00 00 30 30 30 30  36 36 34 00 30 30 30 31  |....0000664.0001|
+00000270  37 35 30 00 30 30 30 31  37 35 30 00 30 30 30 30  |750.0001750.0000|
+00000280  30 30 30 30 30 30 36 00  31 34 35 30 34 32 36 32  |0000006.14504262|
+00000290  30 37 31 00 30 31 31 31  35 34 00 20 00 00 00 00  |071.011154. ....|
+000002a0  00 00 00 00 00 00 00 00  00 00 00 00 00 00 00 00  |................|
+*
+00000340  00 00 00 00 00 00 00 00  00 30 30 30 30 30 30 30  |.........0000000|
+00000350  00 30 30 30 30 30 30 30  00 00 00 00 00 00 00 00  |.0000000........|
+00000360  00 00 00 00 00 00 00 00  00 00 00 00 00 00 00 00  |................|
+*
+00000400  61 70 70 6c 65 0a 00 00  00 00 00 00 00 00 00 00  |apple...........|
+00000410  00 00 00 00 00 00 00 00  00 00 00 00 00 00 00 00  |................|
+*
+00000600  66 72 75 69 74 73 2f 63  68 65 72 72 79 2e 74 78  |fruits/cherry.tx|
+00000610  74 00 00 00 00 00 00 00  00 00 00 00 00 00 00 00  |t...............|
+00000620  00 00 00 00 00 00 00 00  00 00 00 00 00 00 00 00  |................|
+*
+00000660  00 00 00 00 30 30 30 30  36 36 34 00 30 30 30 31  |....0000664.0001|
+00000670  37 35 30 00 30 30 30 31  37 35 30 00 30 30 30 30  |750.0001750.0000|
+00000680  30 30 30 30 30 30 37 00  31 34 35 30 34 32 36 32  |0000007.14504262|
+00000690  30 37 37 00 30 31 31 33  35 36 00 20 00 00 00 00  |077.011356. ....|
+000006a0  00 00 00 00 00 00 00 00  00 00 00 00 00 00 00 00  |................|
+*
+00000740  00 00 00 00 00 00 00 00  00 30 30 30 30 30 30 30  |.........0000000|
+00000750  00 30 30 30 30 30 30 30  00 00 00 00 00 00 00 00  |.0000000........|
+00000760  00 00 00 00 00 00 00 00  00 00 00 00 00 00 00 00  |................|
+*
+00000800  63 68 65 72 72 79 0a 00  00 00 00 00 00 00 00 00  |cherry..........|
+00000810  00 00 00 00 00 00 00 00  00 00 00 00 00 00 00 00  |................|
+*
+00002800
+"""
+)
+
 PADDING_TO_DEFAULT_BLOCKING_FACTOR = unhex(
     """\
 00000400  00 00 00 00 00 00 00 00  00 00 00 00 00 00 00 00  |................|
@@ -136,7 +192,7 @@ PADDING_AFTER_END_OF_ARCHIVE = unhex(
 
 @pytest.mark.parametrize(
     "contents, expected_length, message",
-    (
+    [
         pytest.param(
             GNU_TAR_CONTENTS + PADDING_TO_DEFAULT_BLOCKING_FACTOR,
             len(GNU_TAR_CONTENTS + PADDING_TO_DEFAULT_BLOCKING_FACTOR),
@@ -173,7 +229,7 @@ PADDING_AFTER_END_OF_ARCHIVE = unhex(
             "File end shouldn't include partial zero filled blocks",
             id="posix-padded-after-end",
         ),
-    ),
+    ],
 )
 def test_offset(contents: bytes, expected_length: int, message: str):
     f = File.from_bytes(contents)
@@ -184,7 +240,7 @@ def test_offset(contents: bytes, expected_length: int, message: str):
 
 @pytest.mark.parametrize(
     "contents",
-    (
+    [
         pytest.param(
             GNU_TAR_CONTENTS,
             id="gnu-tar",
@@ -193,11 +249,11 @@ def test_offset(contents: bytes, expected_length: int, message: str):
             POSIX_TAR_CONTENTS,
             id="posix-tar",
         ),
-    ),
+    ],
 )
 @pytest.mark.parametrize(
     "start_complete, message",
-    (
+    [
         pytest.param(
             False,
             "File is truncated and no content can be recovered",
@@ -208,7 +264,7 @@ def test_offset(contents: bytes, expected_length: int, message: str):
             "File is truncated but valid parts should be recovered",
             id="truncated",
         ),
-    ),
+    ],
 )
 def test_truncated_files(contents: bytes, start_complete: bool, message: str):
     truncated = contents[:0x180]
@@ -298,17 +354,35 @@ def test_different_blocking_factor():
 
 @pytest.mark.parametrize(
     "prefix",
-    (
+    [
         pytest.param(b"", id="zero-prefix"),
         pytest.param(b"some prefix ", id="nonzero-prefix"),
-    ),
+    ],
 )
-def test_calculate_chunk(prefix):
+def test_calculate_chunk_ustar(prefix):
     tar_file = File.from_bytes(prefix + GNU_TAR_CONTENTS)
-    handler = TarHandler()
+    handler = TarUstarHandler()
 
     chunk = handler.calculate_chunk(tar_file, len(prefix))
 
     assert chunk is not None
     assert chunk.start_offset == len(prefix)
     assert chunk.end_offset == len(prefix) + len(GNU_TAR_CONTENTS)
+
+
+@pytest.mark.parametrize(
+    "prefix",
+    [
+        pytest.param(b"", id="zero-prefix"),
+        pytest.param(b"some prefix ", id="nonzero-prefix"),
+    ],
+)
+def test_calculate_chunk_unix(prefix):
+    tar_file = File.from_bytes(prefix + UNIX_TAR_CONTENT)
+    handler = TarUnixHandler()
+
+    chunk = handler.calculate_chunk(tar_file, len(prefix))
+
+    assert chunk is not None
+    assert chunk.start_offset == len(prefix)
+    assert chunk.end_offset == len(prefix) + len(UNIX_TAR_CONTENT)

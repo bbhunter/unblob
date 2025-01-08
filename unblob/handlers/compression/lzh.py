@@ -11,7 +11,6 @@ HEADER_MIN_SIZE = 2 + 22
 
 
 class LZHHandler(StructHandler):
-
     NAME = "lzh"
 
     PATTERNS = [
@@ -58,11 +57,10 @@ class LZHHandler(StructHandler):
     EXTRACTOR = Command("7z", "x", "-p", "-y", "{inpath}", "-o{outdir}")
 
     def calculate_chunk(self, file: File, start_offset: int) -> Optional[ValidChunk]:
-
         header = self.parse_header(file, Endian.LITTLE)
 
         if header.level_identifier > 0x2:
-            return
+            return None
 
         if header.level_identifier == 0x2:
             # with level 2, the header size is a uint16 rather than uint8 and there
@@ -73,7 +71,7 @@ class LZHHandler(StructHandler):
             header_size = header.header_size + PADDING_LEN
 
         if header_size < HEADER_MIN_SIZE:
-            return
+            return None
 
         file.seek(-len(header), io.SEEK_CUR)
         file.seek(header_size + header.compressed_size, io.SEEK_CUR)

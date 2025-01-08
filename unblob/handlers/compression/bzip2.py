@@ -95,6 +95,7 @@ def _validate_block_header(file: File):
 def _hyperscan_match(
     context: Bzip2SearchContext, pattern_id: int, offset: int, end: int
 ) -> Scan:
+    del end  # unused argument
     # Ignore any match before the start of this chunk
     if offset < context.start_offset:
         return Scan.Continue
@@ -115,8 +116,8 @@ def _hyperscan_match(
     # and try to continue processing that as well
     if _validate_stream_header(context.file) and _validate_block_header(context.file):
         return Scan.Continue
-    else:
-        return Scan.Terminate
+
+    return Scan.Terminate
 
 
 class BZip2Handler(Handler):
@@ -125,7 +126,7 @@ class BZip2Handler(Handler):
     # magic + version + block_size + block header magic
     PATTERNS = [Regex(r"\x42\x5a\x68[\x31-\x39]\x31\x41\x59\x26\x53\x59")]
 
-    EXTRACTOR = Command("7z", "x", "-y", "{inpath}", "-o{outdir}")
+    EXTRACTOR = Command("7z", "x", "-y", "{inpath}", "-so", stdout="bzip2.uncompressed")
 
     def calculate_chunk(self, file: File, start_offset: int) -> Optional[ValidChunk]:
         if not _validate_stream_header(file):
@@ -139,7 +140,7 @@ class BZip2Handler(Handler):
         )
 
         try:
-            scanner = hyperscan_stream_end_magic_db.build(context, _hyperscan_match)
+            scanner = hyperscan_stream_end_magic_db.build(context, _hyperscan_match)  # type: ignore
             stream_scan(scanner, file)
         except Exception as e:
             logger.debug(

@@ -2,29 +2,24 @@ inputs:
   python-version:
     description: "Python version to setup"
     required: false
-    default: "3.8"
+    default: "3.9"
 
+name: "Setup dependencies"
+description: "Install all required dependencies for worflows to run."
 runs:
   using: "composite"
   steps:
-    - name: Install 3rd party from apt
-      run: sudo apt install e2fsprogs p7zip-full unar zlib1g-dev liblzo2-dev lz4 lzop lziprecover img2simg zstd
-      shell: bash
-
-    - name: Install sasquatch
-      run: |
-        curl -L -o sasquatch_1.0_amd64.deb https://github.com/onekey-sec/sasquatch/releases/download/sasquatch-v1.0/sasquatch_1.0_amd64.deb
-        sudo dpkg -i sasquatch_1.0_amd64.deb
-        rm -f sasquatch_1.0_amd64.deb
+    - name: Install 3rd party dependencies
+      run: sudo unblob/install-deps.sh
       shell: bash
 
     - name: Setup Python
-      uses: actions/setup-python@v2
+      uses: actions/setup-python@v5
       with:
         python-version: ${{ inputs.python-version }}
 
     - name: Restore pip cache
-      uses: actions/cache@v2
+      uses: actions/cache@v4
       with:
         path: ~/.cache/pip
         key: pip-${{ inputs.python-version }}
@@ -34,7 +29,7 @@ runs:
       shell: bash
 
     - name: Restore poetry cache
-      uses: actions/cache@v2
+      uses: actions/cache@v4
       with:
         path: |
           ~/.cache/pypoetry/cache
@@ -42,11 +37,11 @@ runs:
         key: poetry-cache-and-artifacts-${{ inputs.python-version }}
 
     - name: Restore virtualenvs
-      uses: actions/cache@v2
+      uses: actions/cache@v4
       with:
         path: ~/.cache/pypoetry/virtualenvs
         key: venv-${{ hashFiles('poetry.lock') }}-${{ inputs.python-version }}
 
     - name: Poetry install
-      run: UNBLOB_BUILD_RUST_EXTENSION=1 poetry install
+      run: poetry install --with dev
       shell: bash

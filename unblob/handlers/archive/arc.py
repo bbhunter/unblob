@@ -1,6 +1,5 @@
 from typing import Optional
 
-from dissect.cstruct import Instance
 from structlog import get_logger
 
 from unblob.extractors.command import Command
@@ -54,17 +53,16 @@ class ARCHandler(StructHandler):
         except UnicodeDecodeError:
             return False
 
-    def valid_header(self, header: Instance) -> bool:
+    def valid_header(self, header) -> bool:
         if header.archive_marker != 0x1A:
             return False
         if header.header_type > 0x07:
             return False
-        if not self.valid_name(header.name):
+        if not self.valid_name(header.name):  # noqa: SIM103
             return False
         return True
 
     def calculate_chunk(self, file: File, start_offset: int) -> Optional[ValidChunk]:
-
         # we loop from header to header until we reach the end header
         offset = start_offset
         while True:
@@ -77,7 +75,7 @@ class ARCHandler(StructHandler):
             file.seek(offset)
             header = self.parse_header(file)
             if not self.valid_header(header):
-                return
+                return None
 
             offset += len(header) + header.size
 

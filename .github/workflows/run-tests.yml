@@ -5,8 +5,7 @@ on:
     branches:
       - main
   pull_request:
-    branches:
-      - '**'
+  merge_group:
 
 
 jobs:
@@ -15,47 +14,44 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout source code
-        uses: actions/checkout@v2
+        uses: actions/checkout@v4
 
       - name: Setup Python
-        uses: actions/setup-python@v2
+        uses: actions/setup-python@v5
 
-      - name: Setup Rust
-        uses: actions-rs/toolchain@v1
+      - name: Setup 3rd party dependencies
+        uses: ./.github/actions/setup-dependencies
+
+      - name: Setup Nix
+        uses: cachix/install-nix-action@v30
         with:
-          profile: default
-          toolchain: 1.57.0
-
-      - name: Setup Rust cache
-        uses: Swatinem/rust-cache@v1
+          install_url: https://releases.nixos.org/nix/nix-2.18.8/install
 
       - name: Check pre-commit hook
-        uses: pre-commit/action@v2.0.3
-
+        uses: pre-commit/action@v3.0.1
 
   check_pyright:
     name: Check - pyright
     runs-on: ubuntu-latest
     steps:
       - name: Checkout source code
-        uses: actions/checkout@v2
+        uses: actions/checkout@v4
 
       - name: Setup 3rd party dependencies
         uses: ./.github/actions/setup-dependencies
 
       - name: Check - pyright
-        run: PYRIGHT_PYTHON_FORCE_VERSION=1.1.188 poetry run pyright .
-
+        run: poetry run pyright .
 
   run_tests:
     name: Run tests
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        python-version: ["3.8", "3.9", "3.10", "3.11"]
+        python-version: ["3.9", "3.10", "3.11", "3.12", "3.13"]
     steps:
       - name: Checkout source code
-        uses: actions/checkout@v2
+        uses: actions/checkout@v4
 
       - name: Setup 3rd party dependencies
         uses: ./.github/actions/setup-dependencies

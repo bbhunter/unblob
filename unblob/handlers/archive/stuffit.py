@@ -1,18 +1,23 @@
-"""
+"""Stuffit handlers.
+
 We currently support detecting two specific Stuffit file formats:
 
-- Stuffit SIT (with 'SIT!' magic)
-- Stuffit 5 (with 'StuffIt (c)1997-' magic)
+    - Stuffit SIT (with 'SIT!' magic)
 
-Due to lack of access to sample files, source code, and really old packing tools,
-we don't support the following Stuffit file formats at the moment:
+    - Stuffit 5 (with 'StuffIt (c)1997-' magic)
 
-- Stuffit X ('StuffIt!' or 'StuffIt?' magic)
-- Stuffit Delux ('SITD' magic)
+Due to lack of access to sample files, source code, and really old
+packing tools, we don't support the following Stuffit file formats at
+the moment:
+
+    - Stuffit X ('StuffIt!' or 'StuffIt?' magic)
+
+    - Stuffit Delux ('SITD' magic)
 
 If you have the resources to add support for these archive formats,
 feel free to do so !
 """
+
 from typing import Optional
 
 from structlog import get_logger
@@ -28,7 +33,6 @@ class _StuffItHandlerBase(StructHandler):
     """A common base for all StuffIt formats."""
 
     def calculate_chunk(self, file: File, start_offset: int) -> Optional[ValidChunk]:
-
         header = self.parse_header(file, endian=Endian.BIG)
 
         return ValidChunk(

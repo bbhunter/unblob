@@ -4,14 +4,25 @@ import stat
 import struct
 from enum import IntEnum, unique
 from pathlib import Path
-from typing import Dict, Optional
+from typing import Optional
 
 from structlog import get_logger
 
-from unblob.extractor import is_safe_path
-
-from ...file_utils import Endian, InvalidInputFormat, read_until_past, round_up
-from ...models import Extractor, File, HexString, StructHandler, ValidChunk
+from ...file_utils import (
+    Endian,
+    FileSystem,
+    InvalidInputFormat,
+    read_until_past,
+    round_up,
+)
+from ...models import (
+    Extractor,
+    ExtractResult,
+    File,
+    HexString,
+    StructHandler,
+    ValidChunk,
+)
 
 logger = get_logger()
 
@@ -28,7 +39,7 @@ ROMFS_SIGNATURE = b"-rom1fs-"
 
 
 @unique
-class FS_TYPE(IntEnum):
+class FSType(IntEnum):
     HARD_LINK = 0
     DIRECTORY = 1
     FILE = 2
@@ -48,9 +59,7 @@ def valid_checksum(content: bytes) -> bool:
         return False
 
     for i in range(0, len(content), 4):
-        total = (
-            total + struct.unpack(">L", content[i : i + 4])[0]  # noqa: E203
-        ) % MAX_UINT32
+        total = (total + struct.unpack(">L", content[i : i + 4])[0]) % MAX_UINT32
     return total == 0
 
 
@@ -64,11 +73,11 @@ def get_string(file: File) -> bytes:
     return filename.rstrip(b"\x00")
 
 
-class FileHeader(object):
+class FileHeader:
     addr: int
     next_filehdr: int
     spec_info: int
-    type: FS_TYPE
+    fs_type: FSType
     executable: bool
     size: int
     checksum: int
@@ -81,10 +90,10 @@ class FileHeader(object):
 
     def __init__(self, addr: int, file: File):
         self.addr = addr
-        type_exec_next = struct.unpack(">L", file.read(4))[0]
-        self.next_filehdr = type_exec_next & ~0b1111
-        self.type = FS_TYPE(type_exec_next & 0b0111)
-        self.executable = type_exec_next & 0b1000
+        fs_typeexec_next = struct.unpack(">L", file.read(4))[0]
+        self.next_filehdr = fs_typeexec_next & ~0b1111
+        self.fs_type = FSType(fs_typeexec_next & 0b0111)
+        self.executable = fs_typeexec_next & 0b1000
         self.spec_info = struct.unpack(">I", file.read(4))[0]
         self.size = struct.unpack(">I", file.read(4))[0]
         self.checksum = struct.unpack(">I", file.read(4))[0]
@@ -113,18 +122,21 @@ class FileHeader(object):
 
     @property
     def mode(self) -> int:
-        """Permission mode is assumed to be world readable if executable bit is set, and world executable otherwise.
-        Handle mode for both block device and character devices too.
+        """Permission mode.
+
+        It is assumed to be world readable if executable bit is set,
+        and world executable otherwise.  Handle mode for both block
+        device and character devices too.
         """
         mode = WORLD_RWX if self.executable else WORLD_RW
-        mode |= stat.S_IFBLK if self.type == FS_TYPE.BLOCK_DEV else 0x0
-        mode |= stat.S_IFCHR if self.type == FS_TYPE.CHAR_DEV else 0x0
+        mode |= stat.S_IFBLK if self.fs_type == FSType.BLOCK_DEV else 0x0
+        mode |= stat.S_IFCHR if self.fs_type == FSType.CHAR_DEV else 0x0
         return mode
 
     @property
     def dev(self) -> int:
-        """Returns raw device number if block device or character device, zero otherwise."""
-        if self.type in [FS_TYPE.BLOCK_DEV, FS_TYPE.CHAR_DEV]:
+        """Raw device number if block device or character device, zero otherwise."""
+        if self.fs_type in [FSType.BLOCK_DEV, FSType.CHAR_DEV]:
             major = self.spec_info >> 16
             minor = self.spec_info & 0xFFFF
             return os.makedev(major, minor)
@@ -144,13 +156,17 @@ class FileHeader(object):
 
     def __repr__(self):
         return (
-            f"FileHeader<next_filehdr:{self.next_filehdr}, type:{self.type},"
+            f"FileHeader<next_filehdr:{self.next_filehdr}, type:{self.fs_type},"
             f" executable:{self.executable}, spec_info:{self.spec_info},"
             f" size:{self.size}, checksum:{self.checksum}, filename:{self.filename}>"
         )
 
 
-class RomFSHeader(object):
+class RomFSError(Exception):
+    pass
+
+
+class RomFSHeader:
     signature: bytes
     full_size: int
     checksum: int
@@ -158,22 +174,21 @@ class RomFSHeader(object):
     eof: int
     file: File
     end_offset: int
-    inodes: Dict[int, "FileHeader"]
-    extract_root: Path
+    inodes: dict[int, "FileHeader"]
+    fs: FileSystem
 
     def __init__(
         self,
         file: File,
-        extract_root: Path,
+        fs: FileSystem,
     ):
-
         self.file = file
         self.file.seek(0, io.SEEK_END)
         self.eof = self.file.tell()
         self.file.seek(0, io.SEEK_SET)
 
         if self.eof < ROMFS_HEADER_SIZE:
-            raise Exception("File too small to hold ROMFS")
+            raise RomFSError("File too small to hold ROMFS")
 
         self.signature = self.file.read(8)
         self.full_size = struct.unpack(">I", self.file.read(4))[0]
@@ -182,7 +197,7 @@ class RomFSHeader(object):
         self.header_end_offset = self.file.tell()
         self.inodes = {}
 
-        self.extract_root = extract_root
+        self.fs = fs
 
     def valid_checksum(self) -> bool:
         current_position = self.file.tell()
@@ -194,20 +209,22 @@ class RomFSHeader(object):
 
     def validate(self):
         if self.signature != ROMFS_SIGNATURE:
-            raise Exception("Invalid RomFS signature")
+            raise RomFSError("Invalid RomFS signature")
         if self.full_size > self.eof:
-            raise Exception("ROMFS size is greater than file size")
+            raise RomFSError("ROMFS size is greater than file size")
         if not self.valid_checksum():
-            raise Exception("Invalid checksum")
+            raise RomFSError("Invalid checksum")
 
     def is_valid_addr(self, addr):
-        """Validates that an inode address is valid. inodes addresses must be 16 bytes aligned and placed within the RomFS on file."""
-        if (self.header_end_offset <= addr <= self.eof) and (addr % 16 == 0):
-            return True
-        return False
+        """Validate that an inode address is valid.
+
+        Inodes addresses must be 16 bytes aligned and placed within
+        the RomFS on file.
+        """
+        return (self.header_end_offset <= addr <= self.eof) and (addr % 16 == 0)
 
     def is_recursive(self, addr) -> bool:
-        return True if addr in self.inodes else False
+        return addr in self.inodes
 
     def recursive_walk(self, addr: int, parent: Optional[FileHeader] = None):
         while self.is_valid_addr(addr) is True:
@@ -219,113 +236,65 @@ class RomFSHeader(object):
         file_header.parent = parent
 
         if not file_header.valid_checksum():
-            raise Exception(f"Invalid file CRC at addr {addr:0x}.")
+            raise RomFSError(f"Invalid file CRC at addr {addr:0x}.")
 
         logger.debug("walking dir", addr=addr, file=file_header)
 
         if file_header.filename not in [b".", b".."]:
-            if file_header.type == FS_TYPE.DIRECTORY and file_header.spec_info != 0x0:
-                if not self.is_recursive(addr):
-                    self.inodes[addr] = file_header
-                    self.recursive_walk(file_header.spec_info, file_header)
+            if (
+                file_header.fs_type == FSType.DIRECTORY
+                and file_header.spec_info != 0x0
+                and not self.is_recursive(addr)
+            ):
+                self.inodes[addr] = file_header
+                self.recursive_walk(file_header.spec_info, file_header)
             self.inodes[addr] = file_header
         return file_header.next_filehdr
 
-    def create_symlink(self, extract_root: Path, output_path: Path, inode: FileHeader):
-        target = inode.content.decode("utf-8").lstrip("/")
+    def create_symlink(self, output_path: Path, inode: FileHeader):
+        target_path = Path(inode.content.decode("utf-8"))
+        self.fs.create_symlink(src=target_path, dst=output_path)
 
-        if target.startswith(".."):
-            target_path = extract_root.joinpath(output_path.parent, target).resolve()
-        else:
-            target_path = extract_root.joinpath(target).resolve()
-
-        if not is_safe_path(extract_root, target_path):
-            logger.warn(
-                "Path traversal attempt through symlink.", target_path=target_path
-            )
-            return
-        # we create relative paths to make the output directory portable
-        output_path.symlink_to(os.path.relpath(target_path, start=output_path.parent))
-
-    def create_hardlink(self, extract_root: Path, link_path: Path, inode: FileHeader):
-
+    def create_hardlink(self, output_path: Path, inode: FileHeader):
         if inode.spec_info in self.inodes:
-            target = str(self.inodes[inode.spec_info].path).lstrip("/")
-            target_path = extract_root.joinpath(target).resolve()
-
-            # we don't need to check for potential traversal given that, if the inode
-            # is in self.inodes, it already got verified in create_inode.
-            try:
-                os.link(target_path, link_path)
-            except FileNotFoundError:
-                logger.warn(
-                    "Hard link target does not exist, discarding.",
-                    target_path=target_path,
-                    link_path=link_path,
-                )
-            except PermissionError:
-                logger.warn(
-                    "Not enough privileges to create hardlink to block/char device, discarding.",
-                    target_path=target_path,
-                    link_path=link_path,
-                )
+            target_path = self.inodes[inode.spec_info].path
+            self.fs.create_hardlink(dst=output_path, src=target_path)
         else:
-            logger.warn("Invalid hard link target", inode_key=inode.spec_info)
+            logger.warning("Invalid hard link target", inode_key=inode.spec_info)
 
-    def create_inode(self, extract_root: Path, inode: FileHeader):
-
-        output_path = extract_root.joinpath(inode.path).resolve()
-        if not is_safe_path(extract_root, inode.path):
-            logger.warn("Path traversal attempt, discarding.", output_path=output_path)
-            return
+    def create_inode(self, inode: FileHeader):
+        output_path = inode.path
         logger.info("dumping inode", inode=inode, output_path=str(output_path))
 
-        if inode.type == FS_TYPE.HARD_LINK:
-            self.create_hardlink(extract_root, output_path, inode)
-        elif inode.type == FS_TYPE.SYMLINK:
-            self.create_symlink(extract_root, output_path, inode)
-        elif inode.type == FS_TYPE.DIRECTORY:
-            output_path.mkdir(mode=inode.mode, exist_ok=True)
-        elif inode.type == FS_TYPE.FILE:
-            with output_path.open("wb") as f:
-                f.write(inode.content)
-        elif inode.type in [FS_TYPE.BLOCK_DEV, FS_TYPE.CHAR_DEV]:
-            os.mknod(inode.path, inode.mode, inode.dev)
-        elif inode.type == FS_TYPE.FIFO:
-            os.mkfifo(output_path, inode.mode)
+        if inode.fs_type == FSType.HARD_LINK:
+            self.create_hardlink(output_path, inode)
+        elif inode.fs_type == FSType.SYMLINK:
+            self.create_symlink(output_path, inode)
+        elif inode.fs_type == FSType.DIRECTORY:
+            self.fs.mkdir(output_path, mode=inode.mode, exist_ok=True)
+        elif inode.fs_type == FSType.FILE:
+            self.fs.write_bytes(output_path, inode.content)
+        elif inode.fs_type in [FSType.BLOCK_DEV, FSType.CHAR_DEV]:
+            self.fs.mknod(output_path, mode=inode.mode, device=inode.dev)
+        elif inode.fs_type == FSType.FIFO:
+            self.fs.mkfifo(output_path, mode=inode.mode)
 
     def dump_fs(self):
-        # first we create files and directories
-        fd_inodes = {
-            k: v
-            for k, v in self.inodes.items()
-            if v.type in [FS_TYPE.FILE, FS_TYPE.DIRECTORY, FS_TYPE.FIFO, FS_TYPE.SOCKET]
-        }
-        for inode in sorted(fd_inodes.values(), key=lambda inode: inode.path):
-            self.create_inode(self.extract_root, inode)
-
-        if os.geteuid() != 0:
-            logger.warn(
-                "root privileges are required to create block and char devices, skipping."
+        def inodes(*inode_types):
+            return sorted(
+                (v for v in self.inodes.values() if v.fs_type in inode_types),
+                key=lambda inode: inode.path,
             )
-        else:
-            # then we create devices if we have enough privileges
-            dev_inodes = {
-                k: v
-                for k, v in self.inodes.items()
-                if v.type in [FS_TYPE.BLOCK_DEV, FS_TYPE.CHAR_DEV]
-            }
-            for inode in sorted(dev_inodes.values(), key=lambda inode: inode.path):
-                self.create_inode(self.extract_root, inode)
 
-        # then we create links
-        links_inodes = {
-            k: v
-            for k, v in self.inodes.items()
-            if v.type in [FS_TYPE.SYMLINK, FS_TYPE.HARD_LINK]
-        }
-        for inode in sorted(links_inodes.values(), key=lambda inode: inode.path):
-            self.create_inode(self.extract_root, inode)
+        # order of file object creation is important
+        sorted_inodes = (
+            inodes(FSType.FILE, FSType.DIRECTORY, FSType.FIFO, FSType.SOCKET)
+            + inodes(FSType.BLOCK_DEV, FSType.CHAR_DEV)
+            + inodes(FSType.SYMLINK, FSType.HARD_LINK)
+        )
+
+        for inode in sorted_inodes:
+            self.create_inode(inode)
 
     def __str__(self):
         return f"signature: {self.signature}\nfull_size: {self.full_size}\nchecksum: {self.checksum}\nvolume_name: {self.volume_name}"
@@ -333,15 +302,16 @@ class RomFSHeader(object):
 
 class RomfsExtractor(Extractor):
     def extract(self, inpath: Path, outdir: Path):
+        fs = FileSystem(outdir)
         with File.from_path(inpath) as f:
-            header = RomFSHeader(f, outdir)
+            header = RomFSHeader(f, fs)
             header.validate()
             header.recursive_walk(header.header_end_offset, None)
             header.dump_fs()
+            return ExtractResult(reports=fs.problems)
 
 
 class RomFSFSHandler(StructHandler):
-
     NAME = "romfs"
 
     PATTERNS = [
@@ -360,7 +330,6 @@ class RomFSFSHandler(StructHandler):
     EXTRACTOR = RomfsExtractor()
 
     def calculate_chunk(self, file: File, start_offset: int) -> Optional[ValidChunk]:
-
         if not valid_checksum(file.read(512)):
             raise InvalidInputFormat("Invalid RomFS checksum.")
 

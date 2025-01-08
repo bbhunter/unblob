@@ -26,7 +26,7 @@ where the exciting stuff is.
 
 ### Required tools
 
-- **Python**: unblob requires **Python 3.8** or above. Make sure that
+- **Python**: unblob requires **Python 3.9** or above. Make sure that
   [Python is installed](https://www.python.org/downloads/) on your system.
 
 - **git**: You need it for cloning the repository.
@@ -41,15 +41,14 @@ where the exciting stuff is.
 - **Git LFS**: We have big integration test files, and we are using Git LFS to track them.
   [Install `git-lfs`](https://git-lfs.github.com/) from the website.
 
-- **Rust** (_Optional_): unblob has an optional Rust extension for performance
-  intensive processing. Building it is entirely optional and requires
-  [`rustup`](https://rustup.rs/) to be installed on the host system. Follow the
-  instructions on the [rustup website](https://rustup.rs/) to install it.
+- **Rust** (_for unblob-native_): unblob has a [Rust extension](https://github.com/onekey-sec/unblob-native) for
+  performance intensive processing. Building it is entirely optional and requires [`rustup`](https://rustup.rs/) to be
+  installed on the host system. Follow the instructions on the [rustup website](https://rustup.rs/) to install it.
 
 - **pyenv** (_Recommended_): When you are working with multiple versions of Python,
   pyenv makes it very easy to install and use different versions and make virtualenvs.
   Follow the [instructions on GitHub](https://github.com/pyenv/pyenv) for the installation.
-  If your system already has at least Python 3.8 installed, you don't need it.
+  If your system already has at least Python 3.9 installed, you don't need it.
 
 ### Cloning the Git repository
 
@@ -86,17 +85,37 @@ Or instead of Poetry you can use `pyenv`. You can set the Python interpreter
 version for the local folder only with:
 
 ```
-pyenv local 3.8.12
+pyenv local 3.12.7
 ```
 
 ### Installing Python dependencies
 
-We are using [poetry](https://python-poetry.org/) to manage our Python dependencies.
+We are using [poetry](https://python-poetry.org/) to manage our Python
+dependencies. To install all required dependencies for development, you can run
+the following command:
 
-- If you installed Rust: run `UNBLOB_BUILD_RUST_EXTENSION=1 poetry install`
-  to build and install the extension. Set `RUST_DEBUG=1` to build it in debug mode.
+```
+poetry install --with dev
+```
 
-- `poetry install` will install all required dependencies for development.
+Please note that it installs dependencies within the dedicated virtual
+environment. So if you want to run `unblob` or `pytest`, you need to do it from
+within the virtual environment:
+
+Using poetry run:
+
+```
+poetry run unblob
+poetry run pytest tests -v
+```
+
+By dropping into the virtual environment:
+
+```
+poetry shell
+unblob
+pytest tests -v
+```
 
 ### Running pre-commit
 
@@ -200,6 +219,58 @@ If you need to parse structure using different endianness, the class exposes two
 
     If your format allows it, we strongly recommend you to inherit from the
     StructHandler given that it will be strongly typed and less prone to errors.
+
+### DirectoryHandler class
+
+`DirectoryHandler` is a specialized handler responsible for identifying multi-file formats
+located in a directory or in a subtree. The abstract class is located in
+[unblob/models.py](https://github.com/onekey-sec/unblob/blob/main/unblob/models.py):
+
+```python
+class DirectoryHandler(abc.ABC):
+    """A directory type handler is responsible for searching, validating and "unblobbing" files from multiple files in a directory."""
+
+    NAME: str
+
+    EXTRACTOR: DirectoryExtractor
+
+    PATTERN: DirectoryPattern
+
+    @classmethod
+    def get_dependencies(cls):
+        """Return external command dependencies needed for this handler to work."""
+        if cls.EXTRACTOR:
+            return cls.EXTRACTOR.get_dependencies()
+        return []
+
+    @abc.abstractmethod
+    def calculate_multifile(self, file: Path) -> Optional[MultiFile]:
+        """Calculate the MultiFile in a directory, using a file matched by the pattern as a starting point."""
+
+    def extract(self, paths: List[Path], outdir: Path):
+        if self.EXTRACTOR is None:
+            logger.debug("Skipping file: no extractor.", paths=paths)
+            raise ExtractError
+
+        # We only extract every blob once, it's a mistake to extract the same blob again
+        outdir.mkdir(parents=True, exist_ok=False)
+
+        self.EXTRACTOR.extract(paths, outdir)
+```
+
+- `NAME`: a unique name for this handler
+- `PATTERN`: A `DirectoryPattern` used to identify a starting/main file of the given format.
+- `EXTRACTOR`: a [DirectoryExtractor](extractors.md).
+- `get_dependencies()`: returns the extractor dependencies. This helps unblob keep
+  track of [third party dependencies](extractors.md).
+- `calculate_multifile()`: this is the method that needs to be overridden in your
+  handler. It receives a `file` Path object identified by the `PATTERN` in the directory.
+  This is where you implement the logic to compute and return the `MultiFile` file set.
+
+Any files that are being processed as part of a `MultiFile` set would be skipped from `Chunk`
+detection.
+
+Any file that is part of multiple `MultiFile` is a collision and results in a processing error.
 
 ### Example Handler implementation
 
@@ -372,6 +443,48 @@ PATTERNS = [
 ]
 ```
 
+In addition, start and end of input anchors (`^` and `$` like in regular
+expressions) can also be used to restrict a match to the beginning or the end of
+the input file.
+
+### DirectoryPatterns
+
+The `DirectoryHandler` uses these patterns to identify the starting/main file of a given
+multi-file format. There are currently two main types: `Glob` and `SingleFile`
+
+#### Glob
+
+The `Glob` object can use traditional globbing to detect files in a directory. This could be used when
+the file could have a varying part. There are cases where multiple multi-file set could be in a single
+directory. The job of the `DirectoryPattern` is to recognize the main file for each set.
+
+Here is an example on `Glob`:
+
+```python
+PATTERN = Glob("*.7z.001")
+```
+
+This example identify the first volume of a multi-volume sevenzip archive. Notice that this could pick
+up all first volumes in a given directory. (NB: Detecting the other volumes of a given set is the
+responsibility of the `DirectoryHandler.calculate_multifile` function. Do not write a `Glob` which picks
+up all the files of a multi-file set as that would result in errors.)
+
+
+#### SingleFile
+
+The `SingleFile` object can be used to identify a single file with a known name. (Obviously only use this if the
+main file name is well-known and does not have a varying part. It also means that only a single multi-file set
+can be detected in a given directory.)
+
+Here is an example on `SingleFile`:
+
+```python
+PATTERN = SingleFile("meta-data.json")
+```
+
+This would pick up the file `meta-data.json` and pass it to the `DirectoryHandler`. The handler still has to
+verify the file and has to find the additional files.
+
 ## Writing extractors
 
 !!! Recommendation
@@ -406,7 +519,7 @@ class Extractor(abc.ABC):
         return []
 
     @abc.abstractmethod
-    def extract(self, inpath: Path, outdir: Path):
+    def extract(self, inpath: Path, outdir: Path) -> Optional[ExtractResult]:
         """Extract the carved out chunk. Raises ExtractError on failure."""
 ```
 
@@ -417,20 +530,64 @@ Two methods are exposed by this class:
 - `extract()`: you must override this function. This is where you'll perform the
   extraction of `inpath` content into `outdir` extraction directory
 
+!!! Recommendation
+
+    Although it is possible to implement `extract()` with path manipulations,
+    checks for path traversals, and performing io by using Python libraries
+    (`os`, `pathlib.Path`), but it turns out somewhat tedious.
+    Instead we recommend to remove boilerplate and use a helper class `FileSystem` from
+    [unblob/file_utils.py](https://github.com/onekey-sec/unblob/blob/main/unblob/file_utils.py)
+    which ensures that all file objects are created under its root.
+
+### DirectoryExtractor class
+
+The `DirectoryExtractor` interface is defined in
+[unblob/models.py](https://github.com/onekey-sec/unblob/blob/main/unblob/models.py):
+
+```python
+class DirectoryExtractor(abc.ABC):
+    def get_dependencies(self) -> List[str]:
+        """Return the external command dependencies."""
+        return []
+
+    @abc.abstractmethod
+    def extract(self, paths: List[Path], outdir: Path) -> Optional[ExtractResult]:
+        """Extract from a multi file path list.
+
+        Raises ExtractError on failure.
+        """
+```
+
+Two methods are exposed by this class:
+
+- `get_dependencies()`: you should override it if your custom extractor relies on
+  external dependencies such as command line tools
+- `extract()`: you must override this function. This is where you'll perform the
+  extraction of `paths` files into `outdir` extraction directory
+
+!!! Recommendation
+
+    Similarly to `Extractor`, it is recommended to use the `FileSystem` helper class to
+    implement `extract`.
+
 ### Example Extractor
 
 Extractors are quite complex beasts, so rather than trying to come up with a
 fake example, we recommend you to read through our
-[RomFS extractor](https://github.com/onekey-sec/unblob/blob/3008039881a0434deb75962e7999b7e35aca8271/unblob/handlers/filesystem/romfs.py#L334-L340)
+[RomFS extractor](https://github.com/onekey-sec/unblob/blob/868da1b53412e4f1fedaa3da72fab0852330a83e/unblob/handlers/filesystem/romfs.py#L305-L313)
 code to see what it looks like in real world applications.
 
 ## Guidelines
 
 ### Code style
 
-We adhere to PEP8 and enforce proper formatting of source files using
-[black](https://github.com/psf/black) so you should not worry about formatting
-source code at all, `pre-commit` will take care of it.
+We adhere to PEP8 and enforce proper formatting of source files using [ruff
+format](https://docs.astral.sh/ruff/formatter/) so you should not worry about
+formatting source code at all, `pre-commit` will take care of it.
+
+For linting we use [ruff check](https://docs.astral.sh/ruff/linter/). Lint
+errors can be shown in your editor of choice by one of the [editor
+plugins](https://docs.astral.sh/ruff/editors/).
 
 ### File Format Correctness
 
@@ -452,3 +609,9 @@ Learn from us so you can avoid them in the future 🙂
   back.
 - Watch out for [negative seeking](https://github.com/onekey-sec/unblob/pull/280)
 - Make sure you get your types right! signedness can [get in the way](https://github.com/onekey-sec/unblob/pull/130).
+- Try to use as specific as possible patterns to identify data in Handlers to avoid false-positive matches
+  and extra processing in the Handler.
+- Try to avoid using overlapping patterns, as patterns that match on the same data could easily collide. Hyperscan
+  does not guarantee priority between patterns matching on the same data. (Hyperscan reports matches ordered by the
+  pattern match end offset. In case multiple pattern match on the same end offset the matching order depends on the
+  pattern registration order which is undefined in unblob.)

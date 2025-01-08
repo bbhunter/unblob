@@ -1,11 +1,13 @@
+import shutil
 import statistics
+from pathlib import Path
 from typing import Optional
 
 from structlog import get_logger
 
 from unblob.extractors import Command
 
-from ...file_utils import InvalidInputFormat, get_endian, iterate_patterns
+from ...file_utils import InvalidInputFormat, SeekError, get_endian, iterate_patterns
 from ...iter_utils import get_intervals
 from ...models import File, Handler, HexString, StructHandler, ValidChunk
 
@@ -79,7 +81,7 @@ class UBIFSHandler(StructHandler):
     """
     HEADER_STRUCT = "ubifs_sb_node_t"
 
-    EXTRACTOR = Command("ubireader_extract_files", "{inpath}", "-o", "{outdir}")
+    EXTRACTOR = Command("ubireader_extract_files", "{inpath}", "-w", "-o", "{outdir}")
 
     def calculate_chunk(self, file: File, start_offset: int) -> Optional[ValidChunk]:
         endian = get_endian(file, self._BIG_ENDIAN_MAGIC)
@@ -95,6 +97,18 @@ class UBIFSHandler(StructHandler):
         )
 
 
+class UBIExtractor(Command):
+    def extract(self, inpath: Path, outdir: Path):
+        super().extract(inpath, outdir)
+        # ubireader_extract_images creates a superfluous directory named
+        # after the UBI file (inpath here), so we simply move the files up
+        # and delete the remaining directory.
+        superfluous_dir_path = outdir.joinpath(inpath.name)
+        for file_path in superfluous_dir_path.iterdir():
+            shutil.move(file_path.as_posix(), outdir.as_posix())
+        shutil.rmtree(superfluous_dir_path.as_posix())
+
+
 class UBIHandler(Handler):
     NAME = "ubi"
 
@@ -102,7 +116,7 @@ class UBIHandler(Handler):
 
     PATTERNS = [HexString("55 42 49 23 01  // UBI# and version 1")]
 
-    EXTRACTOR = Command("ubireader_extract_images", "{inpath}", "-o", "{outdir}")
+    EXTRACTOR = UBIExtractor("ubireader_extract_images", "{inpath}", "-o", "{outdir}")
 
     def _guess_peb_size(self, file: File) -> int:
         # Since we don't know the PEB size, we need to guess it. At the moment we just find the
@@ -123,12 +137,13 @@ class UBIHandler(Handler):
             first_bytes = file.read(len(self._UBI_EC_HEADER))
             if first_bytes == b"" or first_bytes != self._UBI_EC_HEADER:
                 break
-            file.seek(offset + peb_size)
-
+            try:
+                file.seek(offset + peb_size)
+            except SeekError:
+                break
         return offset
 
     def calculate_chunk(self, file: File, start_offset: int) -> Optional[ValidChunk]:
-
         peb_size = self._guess_peb_size(file)
 
         logger.debug("Guessed UBI PEB size", size=peb_size)

@@ -3,13 +3,13 @@ import itertools
 import sys
 from pathlib import Path
 from types import ModuleType
-from typing import List, Optional, Tuple, Type
+from typing import Optional
 
 import pluggy
 from structlog import get_logger
 
 from unblob import hookspecs
-from unblob.models import Handler
+from unblob.models import DirectoryHandler, Handler
 
 # The entrypoints are defined by the to-be-loaded plugins. The version
 # should be incremented whenever a backward-incompatible change is
@@ -32,26 +32,30 @@ class UnblobPluginManager(pluggy.PluginManager):
         return super().load_setuptools_entrypoints(group, name=name)
 
     def import_path(self, path: Path):
-        """Loads Python code from a given path.
+        """Load Python code from a given path.
 
         The following scenarios are supported based on the contents of
         ``path``:
 
         Single file
-          Path points to a single Python file
+        -----------
+
+        Path points to a single Python file
 
         Multiple files
-          A directory containing one or more Python files or packages.
-          Files are loaded from the directory root.  Additional
-          sub-directories containing Python packages (directories with
-          ``__init__.py``) are loaded recursively.
+        --------------
+
+        A directory containing one or more Python files or packages.
+        Files are loaded from the directory root.  Additional
+        sub-directories containing Python packages (directories with
+        ``__init__.py``) are loaded recursively.
         """
         logger.debug("Importing plugin modules", path=path)
 
         if path.is_file():
             module_name = path.stem
             to_import = [(module_name, path)]
-        elif path.is_dir:
+        elif path.is_dir():
             to_import = [(p.parent.name, p) for p in path.glob("*/__init__.py")]
             to_import.extend((p.stem, p) for p in path.glob("*.py"))
         else:
@@ -64,8 +68,8 @@ class UnblobPluginManager(pluggy.PluginManager):
 
     @classmethod
     def _import_modules(
-        cls, modules_to_import: List[Tuple[str, Path]]
-    ) -> List[ModuleType]:
+        cls, modules_to_import: list[tuple[str, Path]]
+    ) -> list[ModuleType]:
         modules = []
         for module_name, path in modules_to_import:
             spec = importlib.util.spec_from_file_location(module_name, path)
@@ -95,9 +99,22 @@ class UnblobPluginManager(pluggy.PluginManager):
 
     def load_handlers_from_plugins(
         self,
-    ) -> List[Type[Handler]]:
+    ) -> list[type[Handler]]:
         extra_handlers = list(itertools.chain(*self.hook.unblob_register_handlers()))  # type: ignore
         if extra_handlers:
             logger.debug("Loaded handlers from plugins", handlers=extra_handlers)
+
+        return extra_handlers
+
+    def load_dir_handlers_from_plugins(
+        self,
+    ) -> list[type[DirectoryHandler]]:
+        extra_handlers = list(
+            itertools.chain(*self.hook.unblob_register_dir_handlers())
+        )  # type: ignore
+        if extra_handlers:
+            logger.debug(
+                "Loaded directory handlers from plugins", handlers=extra_handlers
+            )
 
         return extra_handlers

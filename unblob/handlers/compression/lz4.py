@@ -1,6 +1,8 @@
+"""LZ4 handler.
+
+Frame format definition: https://github.com/lz4/lz4/blob/dev/doc/lz4_Frame_format.md.
 """
-LZ4 frame format definition: https://github.com/lz4/lz4/blob/dev/doc/lz4_Frame_format.md
-"""
+
 import io
 from typing import Optional
 
@@ -14,10 +16,10 @@ from ...models import File, Handler, HexString, ValidChunk
 
 logger = get_logger()
 
-SKIPPABLE_FRAMES_MAGIC = [0x184D2A50 + i for i in range(0, 16)]
+SKIPPABLE_FRAMES_MAGIC = [0x184D2A50 + i for i in range(16)]
 FRAME_MAGIC = 0x184D2204
 LEGACY_FRAME_MAGIC = 0x184C2102
-FRAME_MAGICS = SKIPPABLE_FRAMES_MAGIC + [FRAME_MAGIC] + [LEGACY_FRAME_MAGIC]
+FRAME_MAGICS = [*SKIPPABLE_FRAMES_MAGIC, FRAME_MAGIC, LEGACY_FRAME_MAGIC]
 
 _1BIT = 0x01
 _2BITS = 0x03
@@ -25,15 +27,15 @@ _2BITS = 0x03
 END_MARK = 0x00000000
 
 CONTENT_SIZE_LEN = 8
-BLOCK_SIZE_LEN = (
-    FRAME_SIZE_LEN
-) = BLOCK_CHECKSUM_LEN = CONTENT_CHECKSUM_LEN = MAGIC_LEN = DICTID_LEN = 4
+BLOCK_SIZE_LEN = FRAME_SIZE_LEN = BLOCK_CHECKSUM_LEN = CONTENT_CHECKSUM_LEN = (
+    MAGIC_LEN
+) = DICTID_LEN = 4
 FLG_LEN = BD_LEN = HC_LEN = 1
 MAX_LEGACY_BLOCK_SIZE = 8 * 1024 * 1024  # 8 MB
 
 
 class FLG:
-    """Represents the FLG field"""
+    """Represents the FLG field."""
 
     version: int = 0
     block_independence: int = 0
@@ -67,7 +69,7 @@ class _LZ4HandlerBase(Handler):
     def _skip_magic_bytes(self, file: File):
         file.seek(MAGIC_LEN, io.SEEK_CUR)
 
-    EXTRACTOR = Command("lz4", "--decompress", "{inpath}", "{outdir}/{infile}")
+    EXTRACTOR = Command("lz4", "--decompress", "{inpath}", "{outdir}/lz4.uncompressed")
 
 
 class LegacyFrameHandler(_LZ4HandlerBase):
@@ -75,7 +77,6 @@ class LegacyFrameHandler(_LZ4HandlerBase):
     PATTERNS = [HexString("02 21 4C 18")]
 
     def calculate_chunk(self, file: File, start_offset: int) -> Optional[ValidChunk]:
-
         self._skip_magic_bytes(file)
 
         while True:
@@ -95,7 +96,7 @@ class LegacyFrameHandler(_LZ4HandlerBase):
             try:
                 uncompressed_block = decompress(compressed_block, MAX_LEGACY_BLOCK_SIZE)
             except LZ4BlockError:
-                raise InvalidInputFormat("Invalid LZ4 legacy frame.")
+                raise InvalidInputFormat("Invalid LZ4 legacy frame.") from None
 
             # See 'fixed block size' in https://android.googlesource.com/platform/external/lz4/+/HEAD/doc/lz4_Frame_format.md#legacy-frame
             if len(uncompressed_block) < MAX_LEGACY_BLOCK_SIZE:
@@ -106,7 +107,7 @@ class LegacyFrameHandler(_LZ4HandlerBase):
 
 
 class SkippableFrameHandler(_LZ4HandlerBase):
-    """This can be anything, basically uncompressed data."""
+    """Can be anything, basically uncompressed data."""
 
     NAME = "lz4_skippable"
     PATTERNS = [HexString("5? 2A 4D 18")]
@@ -120,16 +121,13 @@ class SkippableFrameHandler(_LZ4HandlerBase):
 
 
 class DefaultFrameHandler(_LZ4HandlerBase):
-    """This is the modern version, most frequently used."""
+    """Modern version, most frequently used."""
 
     NAME = "lz4_default"
 
     PATTERNS = [HexString("04 22 4D 18")]
 
-    def calculate_chunk(  # noqa: C901
-        self, file: File, start_offset: int
-    ) -> Optional[ValidChunk]:
-
+    def calculate_chunk(self, file: File, start_offset: int) -> Optional[ValidChunk]:
         self._skip_magic_bytes(file)
 
         # 2. we parse the frame descriptor of dynamic size

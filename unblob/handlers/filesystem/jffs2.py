@@ -2,7 +2,6 @@ import binascii
 import io
 from typing import Optional
 
-from dissect.cstruct import Instance
 from structlog import get_logger
 
 from unblob.file_utils import (
@@ -57,14 +56,11 @@ class _JFFS2Base(StructHandler):
 
     def guess_endian(self, file: File) -> Endian:
         magic = convert_int16(file.read(2), Endian.BIG)
-        if magic == self.BIG_ENDIAN_MAGIC:
-            endian = Endian.BIG
-        else:
-            endian = Endian.LITTLE
+        endian = Endian.BIG if magic == self.BIG_ENDIAN_MAGIC else Endian.LITTLE
         file.seek(-2, io.SEEK_CUR)
         return endian
 
-    def valid_header(self, header: Instance, node_start_offset: int, eof: int) -> bool:
+    def valid_header(self, header, node_start_offset: int, eof: int) -> bool:
         header_crc = (binascii.crc32(header.dumps()[:-4], -1) ^ -1) & 0xFFFFFFFF
         check_crc = True
 
@@ -104,7 +100,6 @@ class _JFFS2Base(StructHandler):
         return True
 
     def calculate_chunk(self, file: File, start_offset: int) -> Optional[ValidChunk]:
-
         file.seek(0, io.SEEK_END)
         eof = file.tell()
         file.seek(start_offset)
@@ -125,18 +120,18 @@ class _JFFS2Base(StructHandler):
                 # to the size of an erase block.
                 if header.magic in [0x0000, 0xFFFF]:
                     file.seek(-len(header), io.SEEK_CUR)
-                    current_offset = read_until_past(file, b"\x00\xFF")
+                    current_offset = read_until_past(file, b"\x00\xff")
                     continue
-                else:
-                    logger.debug(
-                        "unexpected header magic",
-                        header_magic=header.magic,
-                        _verbosity=2,
-                    )
-                    break
+
+                logger.debug(
+                    "unexpected header magic",
+                    header_magic=header.magic,
+                    _verbosity=2,
+                )
+                break
 
             if not self.valid_header(header, node_start_offset, eof):
-                return
+                return None
 
             node_len = round_up(header.totlen, BLOCK_ALIGNMENT)
             current_offset += node_len
@@ -151,7 +146,6 @@ class _JFFS2Base(StructHandler):
 
 
 class JFFS2OldHandler(_JFFS2Base):
-
     NAME = "jffs2_old"
 
     PATTERNS = [
@@ -163,7 +157,6 @@ class JFFS2OldHandler(_JFFS2Base):
 
 
 class JFFS2NewHandler(_JFFS2Base):
-
     NAME = "jffs2_new"
 
     PATTERNS = [

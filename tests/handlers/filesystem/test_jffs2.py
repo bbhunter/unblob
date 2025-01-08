@@ -1,11 +1,10 @@
 import binascii
 
 import pytest
-from dissect.cstruct import Instance
-from helpers import unhex
 
 from unblob.file_utils import Endian, File
 from unblob.handlers.filesystem.jffs2 import JFFS2NewHandler, JFFS2OldHandler
+from unblob.testing import unhex
 
 VALID_JFFS2_NEW_LE_HEADER_CONTENT = unhex(
     """\
@@ -59,7 +58,7 @@ def get_valid_jffs2_old_be_header():
     )
 
 
-def calculate_crc(header: Instance):
+def calculate_crc(header):
     return (binascii.crc32(header.dumps()[:-4], -1) ^ -1) & 0xFFFFFFFF
 
 
@@ -115,7 +114,7 @@ JFFS2_OLD_BE_HEADER_HIGH_TOTLEN.totlen = len(JFFS2_OLD_BE_HEADER_HIGH_TOTLEN) - 
 
 @pytest.mark.parametrize(
     "header, node_start_offset, eof, expected",
-    (
+    [
         pytest.param(
             VALID_JFFS2_NEW_LE_HEADER,
             0,
@@ -186,18 +185,16 @@ JFFS2_OLD_BE_HEADER_HIGH_TOTLEN.totlen = len(JFFS2_OLD_BE_HEADER_HIGH_TOTLEN) - 
             False,
             id="jffs2-new-be-high-totlen",
         ),
-    ),
+    ],
 )
-def test_valid_header_new(
-    header: Instance, node_start_offset: int, eof: int, expected: bool
-):
+def test_valid_header_new(header, node_start_offset: int, eof: int, expected: bool):
     header.hdr_crc = calculate_crc(header)
     assert new_handler.valid_header(header, node_start_offset, eof) == expected
 
 
 @pytest.mark.parametrize(
     "header, node_start_offset, eof, expected",
-    (
+    [
         pytest.param(
             VALID_JFFS2_OLD_LE_HEADER,
             0,
@@ -268,11 +265,9 @@ def test_valid_header_new(
             False,
             id="jffs2-old-be-high-totlen",
         ),
-    ),
+    ],
 )
-def test_valid_header_old(
-    header: Instance, node_start_offset: int, eof: int, expected: bool
-):
+def test_valid_header_old(header, node_start_offset: int, eof: int, expected: bool):
     header.hdr_crc = calculate_crc(header)
     assert old_handler.valid_header(header, node_start_offset, eof) == expected
 

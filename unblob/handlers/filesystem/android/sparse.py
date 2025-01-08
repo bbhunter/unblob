@@ -24,7 +24,6 @@ VALID_CHUNK_TYPES = [
 
 
 class SparseHandler(StructHandler):
-
     NAME = "sparse"
 
     # magic (0xed26ff3a)
@@ -58,10 +57,9 @@ class SparseHandler(StructHandler):
     """
     HEADER_STRUCT = "sparse_header_t"
 
-    EXTRACTOR = Command("simg2img", "{inpath}", "{outdir}/{infile}")
+    EXTRACTOR = Command("simg2img", "{inpath}", "{outdir}/raw.image")
 
     def calculate_chunk(self, file: File, start_offset: int) -> Optional[ValidChunk]:
-
         header = self.parse_header(file, Endian.LITTLE)
 
         count = 0
@@ -69,7 +67,7 @@ class SparseHandler(StructHandler):
             chunk_header = self.cparser_le.chunk_header_t(file)
             if chunk_header.chunk_type not in VALID_CHUNK_TYPES:
                 logger.warning("Invalid chunk type in Android sparse image. Aborting.")
-                return
+                return None
             file.seek(chunk_header.total_sz - len(chunk_header), io.SEEK_CUR)
             count += 1
 

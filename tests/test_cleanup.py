@@ -2,6 +2,7 @@
 
 The tests use zip files as inputs - for simplicity
 """
+
 import io
 import zipfile
 from pathlib import Path
@@ -18,7 +19,7 @@ _DAMAGED_ZIP_CONTENT = b"*BAD*file"
 
 
 def wrapzip(filename: str, content: bytes) -> bytes:
-    """Create an in-memory zip archive with a single file"""
+    """Create an in-memory zip archive with a single file."""
     bio = io.BytesIO()
     z = zipfile.ZipFile(bio, mode="w", compression=zipfile.ZIP_STORED)
     z.writestr(filename, content)
@@ -33,12 +34,12 @@ DAMAGED_ZIP_BYTES = ZIP_BYTES.replace(_ZIP_CONTENT, _DAMAGED_ZIP_CONTENT)
 assert ZIP_BYTES != DAMAGED_ZIP_BYTES
 
 
-@pytest.fixture()
+@pytest.fixture
 def input_file(tmp_path: Path):
     return tmp_path / "input_file"
 
 
-@pytest.fixture()
+@pytest.fixture
 def output_dir(tmp_path):
     output_dir = tmp_path / "output"
     output_dir.mkdir()
@@ -49,7 +50,7 @@ def test_remove_extracted_chunks(input_file: Path, output_dir: Path):
     input_file.write_bytes(ZIP_BYTES)
     config = ExtractionConfig(
         extract_root=output_dir,
-        entropy_depth=0,
+        randomness_depth=0,
     )
 
     all_reports = process_file(config, input_file)
@@ -61,7 +62,7 @@ def test_keep_all_problematic_chunks(input_file: Path, output_dir: Path):
     input_file.write_bytes(DAMAGED_ZIP_BYTES)
     config = ExtractionConfig(
         extract_root=output_dir,
-        entropy_depth=0,
+        randomness_depth=0,
     )
 
     all_reports = process_file(config, input_file)
@@ -74,7 +75,7 @@ def test_keep_all_unknown_chunks(input_file: Path, output_dir: Path):
     input_file.write_bytes(b"unknown1" + ZIP_BYTES + b"unknown2")
     config = ExtractionConfig(
         extract_root=output_dir,
-        entropy_depth=0,
+        randomness_depth=0,
     )
 
     all_reports = process_file(config, input_file)
@@ -88,6 +89,7 @@ class _HandlerWithNullExtractor(Handler):
     PATTERNS = [Regex(".")]
 
     def calculate_chunk(self, file: File, start_offset: int) -> ValidChunk:
+        del file  # unused argument
         return ValidChunk(start_offset=start_offset, end_offset=start_offset + 1)
 
 
@@ -95,7 +97,7 @@ def test_keep_chunks_with_null_extractor(input_file: Path, output_dir: Path):
     input_file.write_bytes(b"some text")
     config = ExtractionConfig(
         extract_root=output_dir,
-        entropy_depth=0,
+        randomness_depth=0,
         handlers=(_HandlerWithNullExtractor,),
     )
     all_reports = process_file(config, input_file)

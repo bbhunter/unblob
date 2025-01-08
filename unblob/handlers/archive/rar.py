@@ -1,6 +1,7 @@
-"""
+"""RAR handler.
+
 RAR Version 4.x
-https://codedread.github.io/bitjs/docs/unrar.html
+https://codedread.github.io/bitjs/docs/unrar.html.
 
 RAR Version 5.x
 https://www.rarlab.com/technote.htm#rarsign
@@ -32,11 +33,10 @@ class RarHandler(Handler):
     EXTRACTOR = Command("unar", "-no-directory", "-p", "", "{inpath}", "-o", "{outdir}")
 
     def calculate_chunk(self, file: File, start_offset: int) -> Optional[ValidChunk]:
-
         try:
             rar_file = rarfile.RarFile(file)
         except (rarfile.Error, ValueError):
-            return
+            return None
 
         # RarFile have the side effect of moving the file pointer
         rar_end_offset = file.tell()

@@ -22,7 +22,6 @@ class LZipHandler(Handler):
     PATTERNS = [HexString("4C 5A 49 50 01")]
 
     def calculate_chunk(self, file: File, start_offset: int) -> Optional[ValidChunk]:
-
         file.seek(HEADER_LEN, io.SEEK_CUR)
         # quite the naive idea but it works
         # the idea is to read 8 bytes uint64 every 2 bytes alignment
@@ -41,5 +40,5 @@ class LZipHandler(Handler):
         return ValidChunk(start_offset=start_offset, end_offset=end_offset)
 
     EXTRACTOR = Command(
-        "lziprecover", "-k", "-D0", "-i", "{inpath}", "-o", "{outdir}/{infile}"
+        "lziprecover", "-k", "-D0", "-i", "{inpath}", "-o", "{outdir}/lz.uncompressed"
     )

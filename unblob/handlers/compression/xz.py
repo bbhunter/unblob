@@ -1,5 +1,5 @@
 import io
-from typing import Optional, Tuple
+from typing import Optional
 
 import attr
 from pyperscan import Flag, Pattern, Scan, StreamDatabase
@@ -23,7 +23,7 @@ logger = get_logger()
 
 # The .xz file format definition: https://tukaani.org/xz/xz-file-format-1.0.4.txt
 
-STREAM_START_MAGIC = b"\xFD\x37\x7A\x58\x5A\x00"
+STREAM_START_MAGIC = b"\xfd\x37\x7a\x58\x5a\x00"
 
 STREAM_END_MAGIC_PATTERNS = [
     HexString("00 00 59 5A"),  # None
@@ -69,7 +69,7 @@ class XZSearchContext:
     stream_flag: int
 
 
-def read_multibyte_int(file: File) -> Tuple[int, int]:
+def read_multibyte_int(file: File) -> tuple[int, int]:
     """Read a multibyte integer and return the number of bytes read and the integer itself."""
     data = bytearray(file.read(MAX_MBI_LEN))
     file.seek(-MAX_MBI_LEN, io.SEEK_CUR)
@@ -107,7 +107,7 @@ def get_stream_size(footer_offset: int, file: File) -> int:
 
     # read Record 'Unpadded Size' and 'Uncompressed Size' for every Record
     blocks_size = 0
-    for _ in range(0, num_records):
+    for _ in range(num_records):
         size, unpadded_size = read_multibyte_int(file)
         index_size += size
 
@@ -118,16 +118,16 @@ def get_stream_size(footer_offset: int, file: File) -> int:
 
     index_size += CRC32_LEN
 
-    stream_size = round_up(
+    return round_up(
         (STREAM_HEADER_LEN + blocks_size + index_size + STREAM_FOOTER_LEN),
         XZ_PADDING,
     )
-    return stream_size
 
 
 def _hyperscan_match(
     context: XZSearchContext, pattern_id: int, offset: int, end: int
 ) -> Scan:
+    del pattern_id, end  # unused arguments
     # if we matched before our start offset, continue looking
     end_offset = offset + FLAG_LEN + EOS_MAGIC_LEN
     if end_offset < context.start_offset:
@@ -166,10 +166,9 @@ class XZHandler(Handler):
 
     PATTERNS = [HexString("FD 37 7A 58 5A 00")]
 
-    EXTRACTOR = Command("7z", "x", "-y", "{inpath}", "-o{outdir}")
+    EXTRACTOR = Command("7z", "x", "-y", "{inpath}", "-so", stdout="xz.uncompressed")
 
     def calculate_chunk(self, file: File, start_offset: int) -> Optional[ValidChunk]:
-
         file.seek(start_offset + len(STREAM_START_MAGIC), io.SEEK_SET)
         stream_flag = convert_int16(file.read(2), Endian.BIG)
         if stream_flag not in VALID_FLAGS:
@@ -183,7 +182,7 @@ class XZHandler(Handler):
         )
 
         try:
-            scanner = hyperscan_stream_end_magic_db.build(context, _hyperscan_match)
+            scanner = hyperscan_stream_end_magic_db.build(context, _hyperscan_match)  # type: ignore
             stream_scan(scanner, file)
         except Exception as e:
             logger.debug(

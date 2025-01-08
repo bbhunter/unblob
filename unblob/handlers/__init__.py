@@ -1,5 +1,27 @@
-from ..models import Handlers
-from .archive import ar, arc, arj, cab, cpio, dmg, rar, sevenzip, stuffit, tar, zip
+from ..models import DirectoryHandlers, Handlers
+from .archive import (
+    ar,
+    arc,
+    arj,
+    cab,
+    cpio,
+    dmg,
+    rar,
+    sevenzip,
+    stuffit,
+    tar,
+)
+from .archive import (
+    zip as ziparchive,
+)
+from .archive.autel import ecc
+from .archive.dlink import encrpted_img, shrs
+from .archive.engeniustech import engenius
+from .archive.hp import bdl, ipkg
+from .archive.instar import bneg, instar_hd
+from .archive.netgear import chk, trx
+from .archive.qnap import qnap_nas
+from .archive.xiaomi import hdr
 from .compression import (
     bzip2,
     compress,
@@ -36,6 +58,8 @@ BUILTIN_HANDLERS: Handlers = (
     jffs2.JFFS2OldHandler,
     ntfs.NTFSHandler,
     romfs.RomFSFSHandler,
+    squashfs.SquashFSv1Handler,
+    squashfs.SquashFSv2Handler,
     squashfs.SquashFSv3Handler,
     squashfs.SquashFSv3DDWRTHandler,
     squashfs.SquashFSv3BroadcomHandler,
@@ -45,20 +69,32 @@ BUILTIN_HANDLERS: Handlers = (
     ubi.UBIHandler,
     ubi.UBIFSHandler,
     yaffs.YAFFSHandler,
-    yaffs.YAFFS2Handler,
+    chk.NetgearCHKHandler,
+    trx.NetgearTRXv1Handler,
+    trx.NetgearTRXv2Handler,
+    encrpted_img.EncrptedHandler,
+    shrs.SHRSHandler,
+    hdr.HDR1Handler,
+    hdr.HDR2Handler,
+    qnap_nas.QnapHandler,
+    bneg.BNEGHandler,
+    bdl.HPBDLHandler,
+    instar_hd.InstarHDHandler,
+    ipkg.HPIPKGHandler,
     sparse.SparseHandler,
     ar.ARHandler,
     arc.ARCHandler,
     arj.ARJHandler,
     cab.CABHandler,
-    tar.TarHandler,
+    tar.TarUstarHandler,
+    tar.TarUnixHandler,
     cpio.PortableASCIIHandler,
     cpio.PortableASCIIWithCRCHandler,
     cpio.PortableOldASCIIHandler,
     cpio.BinaryHandler,
     sevenzip.SevenZipHandler,
     rar.RarHandler,
-    zip.ZIPHandler,
+    ziparchive.ZIPHandler,
     dmg.DMGHandler,
     iso9660.ISO9660FSHandler,
     stuffit.StuffItSITHandler,
@@ -78,4 +114,11 @@ BUILTIN_HANDLERS: Handlers = (
     elf.ELF32Handler,
     elf.ELF64Handler,
     zlib.ZlibHandler,
+    engenius.EngeniusHandler,
+    ecc.AutelECCHandler,
+)
+
+BUILTIN_DIR_HANDLERS: DirectoryHandlers = (
+    sevenzip.MultiVolumeSevenZipHandler,
+    gzip.MultiVolumeGzipHandler,
 )

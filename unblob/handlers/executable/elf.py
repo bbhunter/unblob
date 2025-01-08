@@ -1,9 +1,10 @@
 import io
+import shutil
 from pathlib import Path
 from typing import Optional
 
+import attr
 import lief
-from dissect.cstruct import Instance
 from structlog import get_logger
 
 from unblob.extractor import carve_chunk_to_file
@@ -16,123 +17,135 @@ from unblob.file_utils import (
     iterate_patterns,
     round_up,
 )
-from unblob.models import ExtractError, Extractor, HexString, StructHandler, ValidChunk
+from unblob.models import HexString, StructHandler, ValidChunk
 
-lief.logging.set_level(lief.logging.LOGGING_LEVEL.ERROR)
+lief.logging.disable()
 
 logger = get_logger()
 
 KERNEL_MODULE_SIGNATURE_INFO_LEN = 12
 KERNEL_MODULE_SIGNATURE_FOOTER = b"~Module signature appended~\n"
 
-
-class NullExtract(ExtractError):
-    pass
+KERNEL_INIT_DATA_SECTION = ".init.data"
 
 
-class ELFKernelExtractor(Extractor):
-    KERNEL_SYMBOLS_SECTION = "__ksymtab"
-    KERNEL_INIT_DATA_SECTION = ".init.data"
-
+@attr.define(repr=False)
+class ElfChunk(ValidChunk):
     def extract(self, inpath: Path, outdir: Path):
+        # ELF file extraction is special in that in the general case no new files are extracted, thus
+        # when we want to clean up all carves to save place, carved ELF files would be deleted as well,
+        # however we want to keep carved out ELF files, as they are the interesting stuff!
         elf = lief.ELF.parse(str(inpath))
 
-        if not (
-            elf.header.file_type == lief.ELF.E_TYPE.EXECUTABLE
-            and elf.has_section(self.KERNEL_SYMBOLS_SECTION)
-        ):
-            # Non Linux kernel image
-            raise NullExtract()
+        if elf is None:
+            logger.error(
+                "Trying to extract an invalid ELF file.", inpath=inpath, outdir=outdir
+            )
+            return
 
-        self.extract_initramfs(elf, inpath, outdir)
+        is_kernel = (
+            elf.header.file_type == lief.ELF.Header.FILE_TYPE.EXEC
+            and elf.has_section(KERNEL_INIT_DATA_SECTION)
+        )
+        if is_kernel:
+            with File.from_path(inpath) as file:
+                extract_initramfs(elf, file, outdir)
+        elif not self.is_whole_file:
+            # make a copy, and let the carved chunk be deleted
+            outdir.mkdir(parents=True, exist_ok=False)
+            shutil.copy2(inpath, outdir / "carved.elf")
+            # more work will be done, when outdir is picked up by processing,
+            # and the ELF file is processed as a whole file.
+            # As a performance side effect, ELF files will be searched for chunks twice.
+            # Even though the second chunk search one is short-circuited,
+            # because the ELF handler will recognize it as a whole file
+            # other handlers might burn some cycles on the file as well.
 
-    def extract_initramfs(self, elf, inpath, outdir):
-        if not elf.has_section(self.KERNEL_INIT_DATA_SECTION):
-            raise NullExtract()
 
-        init_data = elf.get_section(self.KERNEL_INIT_DATA_SECTION)
+def extract_initramfs(elf, file: File, outdir):
+    """Extract the initramfs part, with a potentially 4 extra bytes.
 
-        if not init_data.size:
-            raise NullExtract()
+    Due to alignment definition of initramfs the start-end offsets can not be exactly calculated,
+    so the output could have a 4 extra bytes before or after the initramfs.
+    """
+    if not elf.has_section(KERNEL_INIT_DATA_SECTION):
+        return
 
-        is_64bit = elf.header.identity_class == lief.ELF.ELF_CLASS.CLASS64
-        endian = (
-            Endian.LITTLE
-            if elf.header.identity_data == lief.ELF.ELF_DATA.LSB
-            else Endian.BIG
+    init_data = elf.get_section(KERNEL_INIT_DATA_SECTION)
+
+    if not init_data.size:
+        return
+
+    is_64bit = elf.header.identity_class == lief.ELF.Header.CLASS.ELF64
+    endian = (
+        Endian.LITTLE
+        if elf.header.identity_data == lief.ELF.Header.ELF_DATA.LSB
+        else Endian.BIG
+    )
+
+    init_data_end_offset = init_data.file_offset + init_data.size
+
+    # initramfs size is at the end of the section either 64bit or 32bit depending on the platform
+    # see usr/initramfs_data.S in the kernel
+    # The size is padded to 8 bytes, see include/asm-generic/vmlinux.lds.h
+    # The actual initramfs is right before the size
+    if is_64bit:
+        initramfs_size_offset = init_data.file_offset + init_data.size - 8
+        initramfs_size = convert_int64(
+            file[initramfs_size_offset:init_data_end_offset],
+            endian=endian,
+        )
+    else:
+        initramfs_size_offset = init_data.file_offset + init_data.size - 4
+        initramfs_size = convert_int32(
+            file[initramfs_size_offset:init_data_end_offset],
+            endian=endian,
         )
 
-        with File.from_path(inpath) as file:
-            init_data_end_offset = init_data.file_offset + init_data.size
+    # initramfs start is aligned to 4 bytes, initramfs_size_offset is aligned to 8 bytes
+    # this is unfortunate, as we do not know the start, only the padded end
+    # unfortunately we have two valid values for the padding of the initramfs end:
+    #   0 and 4, 1 and 5, 2 and 6, 3 and 7
+    # let's calculate the offsets for the smaller padding values
+    initramfs_start = initramfs_size_offset - round_up(initramfs_size, 4)
+    initramfs_end = initramfs_start + initramfs_size
+    padding = initramfs_size_offset - initramfs_end
 
-            # initramfs size is at the end of the section either 64bit or 32bit depending on the platform
-            # see usr/initramfs_data.S in the kernel
-            # The size is padded to 8 bytes, see include/asm-generic/vmlinux.lds.h
-            # The actual initramfs is right before the size
-            if is_64bit:
-                initramfs_size_offset = init_data.file_offset + init_data.size - 8
-                initramfs_size = convert_int64(
-                    file[initramfs_size_offset:init_data_end_offset],
-                    endian=endian,
-                )
-            else:
-                initramfs_size_offset = init_data.file_offset + init_data.size - 4
-                initramfs_size = convert_int32(
-                    file[initramfs_size_offset:init_data_end_offset],
-                    endian=endian,
-                )
+    # initramfs can be turned off (https://www.linux.com/training-tutorials/kernel-newbie-corner-initrd-and-initramfs-whats/)
+    # in which case the above calculations most probably end up with bogus chunk offsets
+    if not (
+        init_data.file_offset <= initramfs_start < initramfs_end <= init_data_end_offset
+        and (bytes(padding) == file[initramfs_end:initramfs_size_offset])
+    ):
+        return
 
-            max_padding = 0
-            while (
-                file[initramfs_size_offset - max_padding - 1] == 0 and max_padding < 8
-            ):
-                max_padding += 1
+    # when bigger padding is also a possibility, include 4 more bytes from the beginning
+    if (init_data.file_offset <= initramfs_start - 4) and (
+        bytes(padding + 4) == file[initramfs_end - 4 : initramfs_size_offset]
+    ):
+        initramfs_start -= 4
 
-            padding = min(max_padding, round_up(initramfs_size, 8) - initramfs_size + 4)
-
-            initramfs_end = initramfs_size_offset - padding
-            initramfs_start = initramfs_end - initramfs_size
-
-            # initramfs can be turned off (https://www.linux.com/training-tutorials/kernel-newbie-corner-initrd-and-initramfs-whats/)
-            # in which case the above calculations most probably end up with bogus chunk offsets
-            if (
-                init_data.file_offset
-                <= initramfs_start
-                < initramfs_end
-                <= init_data_end_offset
-            ):
-                carve_chunk_to_file(
-                    outdir.joinpath("initramfs"),
-                    file,
-                    ValidChunk(start_offset=initramfs_start, end_offset=initramfs_end),
-                )
-            else:
-                raise NullExtract()
+    carve_chunk_to_file(
+        outdir / "initramfs",
+        file,
+        ValidChunk(start_offset=initramfs_start, end_offset=initramfs_end),
+    )
 
 
 class _ELFBase(StructHandler):
-
-    EXTRACTOR = ELFKernelExtractor()
+    EXTRACTOR = None
     SECTION_HEADER_STRUCT = "elf_shdr_t"
     PROGRAM_HEADER_STRUCT = "elf_phdr_t"
 
-    @staticmethod
-    def _check_field(field, value):
-        # LIEF uses pybind11 where Enum lookup always finds a value, but unknown values are returned as '???'
-        # https://github.com/pybind/pybind11/blob/68a0b2dfd8cb3f5ac1846f22b6a8d0d539cb493c/include/pybind11/pybind11.h#L1907
-        # we need to validate if the matched value is indeed a valid value
-        if field(value).name not in field.__members__:
-            raise ValueError
-
-    def is_valid_header(self, header: Instance) -> bool:
+    def is_valid_header(self, header) -> bool:
         # check that header fields have valid values
         try:
-            self._check_field(lief.ELF.E_TYPE, header.e_type)
-            self._check_field(lief.ELF.ARCH, header.e_machine)
-            self._check_field(lief.ELF.VERSION, header.e_version)
-            return True
+            lief.ELF.Header.FILE_TYPE(header.e_type)
+            lief.ELF.ARCH(header.e_machine)
+            lief.ELF.Header.VERSION(header.e_version)
         except ValueError:
             return False
+        return True
 
     @staticmethod
     def get_endianness(file: File, start_offset: int) -> Endian:
@@ -151,15 +164,17 @@ class _ELFBase(StructHandler):
                 self.SECTION_HEADER_STRUCT, file, endian
             )
 
-            if (
-                lief.ELF.SECTION_TYPES(section_header.sh_type)
-                == lief.ELF.SECTION_TYPES.NOBITS
-            ):
+            try:
+                if (
+                    lief.ELF.Section.TYPE(section_header.sh_type)
+                    == lief.ELF.Section.TYPE.NOBITS
+                ):
+                    continue
+            except ValueError:
                 continue
 
             section_end = section_header.sh_offset + section_header.sh_size
-            if section_end > last_section_end:
-                last_section_end = section_end
+            last_section_end = max(section_end, last_section_end)
 
         return last_section_end
 
@@ -175,25 +190,18 @@ class _ELFBase(StructHandler):
             )
 
             program_end = program_header.p_offset + program_header.p_filesz
-            if program_end > last_program_end:
-                last_program_end = program_end
+            last_program_end = max(program_end, last_program_end)
 
         return last_program_end
 
-    def get_end_offset(
-        self, file: File, start_offset: int, header: Instance, endian
-    ) -> int:
+    def get_end_offset(self, file: File, start_offset: int, header, endian) -> int:
         # Usually the section header is the last, but in some cases the program headers are
         # put to the end of the file, and in some cases sections header and actual sections
         # can be also intermixed, so we need also to check the end of the last section and
         # also the last program segment.
         # We check which one is the last and use it as a file size.
-        section_headers_end = (
-            start_offset + header.e_shoff + (header.e_shnum * header.e_shentsize)
-        )
-        program_headers_end = (
-            start_offset + header.e_phoff + (header.e_phnum * header.e_phentsize)
-        )
+        section_headers_end = header.e_shoff + (header.e_shnum * header.e_shentsize)
+        program_headers_end = header.e_phoff + (header.e_phnum * header.e_phentsize)
 
         last_section_end = self.get_last_section_end(
             file, start_offset + header.e_shoff, header.e_shnum, endian
@@ -203,7 +211,7 @@ class _ELFBase(StructHandler):
             file, start_offset + header.e_phoff, header.e_phnum, endian
         )
 
-        return max(
+        return start_offset + max(
             section_headers_end, program_headers_end, last_section_end, last_program_end
         )
 
@@ -242,26 +250,26 @@ class _ELFBase(StructHandler):
 
         return end_offset
 
-    def calculate_chunk(self, file: File, start_offset: int) -> Optional[ValidChunk]:
+    def calculate_chunk(self, file: File, start_offset: int) -> Optional[ElfChunk]:
         endian = self.get_endianness(file, start_offset)
         file.seek(start_offset, io.SEEK_SET)
         header = self.parse_header(file, endian)
         if not self.is_valid_header(header):
-            return
+            return None
         end_offset = self.get_end_offset(file, start_offset, header, endian)
 
         # kernel modules are always relocatable
-        if header.e_type == lief.ELF.E_TYPE.RELOCATABLE.value:
+        if header.e_type == lief.ELF.Header.FILE_TYPE.REL.value:
             end_offset = self.get_signed_kernel_module_end_offset(file, end_offset)
 
-        return ValidChunk(
+        # do a special extraction of ELF files with ElfChunk
+        return ElfChunk(
             start_offset=start_offset,
             end_offset=end_offset,
         )
 
 
 class ELF32Handler(_ELFBase):
-
     NAME = "elf32"
 
     PATTERNS = [
@@ -341,7 +349,6 @@ class ELF32Handler(_ELFBase):
 
 
 class ELF64Handler(_ELFBase):
-
     NAME = "elf64"
 
     PATTERNS = [

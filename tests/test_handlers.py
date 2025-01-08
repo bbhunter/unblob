@@ -1,5 +1,5 @@
-"""
-Dynamically generate test cases from files in the tests/integration directory.
+"""Dynamically generate test cases from files in the tests/integration directory.
+
 Directories can be nested arbitrarily.
 Each of the test folders should contain 2 things:
 - The original file we want to test.
@@ -9,7 +9,6 @@ Each of the test folders should contain 2 things:
 
 import inspect
 from pathlib import Path
-from typing import Type
 
 import pytest
 
@@ -43,13 +42,13 @@ def test_all_handlers(
     "handler",
     (pytest.param(handler, id=handler.NAME) for handler in handlers.BUILTIN_HANDLERS),
 )
-def test_missing_handlers_integrations_tests(handler: Type[Handler]):
+def test_missing_handlers_integrations_tests(handler: type[Handler]):
     handler_module_path = Path(inspect.getfile(handler))
     handler_test_path = handler_module_path.relative_to(
         HANDLERS_PACKAGE_PATH
     ).with_suffix("")
 
-    if handler.NAME == handler_test_path.name:
+    if handler_test_path.name == handler.NAME:
         # when there is 1 handler class in the handler module, with the same NAME as the module
         expected_test_path = handler_test_path
     else:
