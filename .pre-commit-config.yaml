@@ -1,9 +1,9 @@
 # See https://pre-commit.com for more information
 # See https://pre-commit.com/hooks.html for more hooks
-exclude: ^tests/integration|\.patch$
+exclude: ^tests/integration|\.patch|^nix/_sources
 repos:
   - repo: https://github.com/pre-commit/pre-commit-hooks
-    rev: v4.0.1
+    rev: v5.0.0
     hooks:
       - id: trailing-whitespace
         exclude: ".*\\.md"
@@ -13,37 +13,74 @@ repos:
       - id: check-yaml
       - id: check-added-large-files
 
-  - repo: https://github.com/psf/black
-    rev: 22.3.0
+  - repo: local
     hooks:
-      - id: black
-        name: Check black
-
-  - repo: https://github.com/PyCQA/flake8
-    rev: 4.0.1
-    hooks:
-      - id: flake8
-        name: Check flake8
-
-  - repo: https://github.com/PyCQA/isort
-    rev: 5.10.1
-    hooks:
-      - id: isort
-        name: Check isort
+      - id: ruff
+        name: Check python (ruff)
+        language: system
+        types_or: [python, pyi]
+        require_serial: true
+        entry: uv run ruff check --force-exclude
+        args:
+          [--output-format=full, --fix, --show-fixes, --exit-non-zero-on-fix]
+      - id: ruff-format
+        name: Format python (ruff)
+        language: system
+        types_or: [python, pyi]
+        require_serial: true
+        entry: uv run ruff format --force-exclude
+      - id: nixfmt
+        name: Format Nix (nixfmt)
+        types: [nix]
+        language: system
+        require_serial: true
+        entry: bash -c 'command -v nix && nix "$@" || echo "skipping nixfmt"' nix
+        args:
+          - --experimental-features
+          - nix-command flakes
+          - --accept-flake-config
+          - fmt
+      - id: taplo-format
+        name: Format TOML (taplo)
+        language: system
+        types: [toml]
+        entry: uv run taplo format
+      - id: taplo-lint
+        name: Lint TOML (taplo)
+        language: system
+        types: [toml]
+        entry: uv run taplo lint
+        args:
+          - --default-schema-catalogs
+      - id: cargo-fmt # rustup component add rustfmt
+        name: Check rust (cargo fmt)
+        entry: cargo fmt --all --
+        language: system
+        types: [rust]
+        pass_filenames: false
+      - id: cargo-clippy # rustup component add clippy
+        name: Check rust (cargo clippy)
+        entry: cargo clippy --tests --all-features -- -D warnings
+        language: system
+        pass_filenames: false
+        types: [rust]
 
   - repo: https://github.com/jendrikseipp/vulture
-    rev: v2.3
+    rev: v2.14
     hooks:
       - id: vulture
         name: Check vulture
 
-  - repo: https://github.com/doublify/pre-commit-rust
-    rev: v1.0
+  - repo: https://github.com/python-jsonschema/check-jsonschema
+    rev: 0.31.1
     hooks:
-      - id: fmt
-      - id: clippy
+      - id: check-github-actions
+        name: Check Github actions
+      - id: check-github-workflows
+        name: Check Github workflows
 
-  - repo: https://github.com/nix-community/nixpkgs-fmt
-    rev: master
+  - repo: https://github.com/renovatebot/pre-commit-hooks
+    rev: 39.171.1
     hooks:
-    -   id: nixpkgs-fmt
+      - id: renovate-config-validator
+        args: [--strict]
