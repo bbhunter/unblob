@@ -6,4 +6,7 @@ build/
 *.egg-info/
 *.so
 .idea
-.coverage
+.coverage*
+/.venv
+unblob.log
+/.direnv

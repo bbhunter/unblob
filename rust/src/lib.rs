@@ -1,16 +1,15 @@
-pub(crate) mod math;
+pub mod math_tools;
+pub mod sandbox;
 
 use pyo3::prelude::*;
 
-/// Calculates Shannon entropy of data
-#[pyfunction(text_signature = "(data)")]
-pub fn shannon_entropy(data: &[u8]) -> PyResult<f64> {
-    Ok(math::shannon_entropy(data))
-}
-
-/// Performance sensitive functionality
+/// Performance-critical functionality
 #[pymodule]
-fn _rust(_py: Python, m: &PyModule) -> PyResult<()> {
-    m.add_function(wrap_pyfunction!(shannon_entropy, m)?)?;
+fn _rust(m: &Bound<'_, PyModule>) -> PyResult<()> {
+    math_tools::init_module(m)?;
+    sandbox::init_module(m)?;
+
+    pyo3_log::init();
+
     Ok(())
 }

@@ -33,7 +33,8 @@ extraction of arbitrary firmware.
 Specialized tools that can extract information from those firmware images already
 exist, but we were carving for something smarter that could identify both
 **start-offset** and **end-offset** of a specific chunk
-(e.g. filesystem, compression stream, archive, ...).
+(e.g. filesystem, compression stream, archive, ...) as well as handle formats
+split across multiple files.
 
 We **stick to the format standard** as much as possible when deriving these
 offsets, and we clearly define what we want out of identified chunks (e.g., not
@@ -59,7 +60,7 @@ unblob has been developed with the following objectives in mind:
   tested](https://github.com/onekey-sec/unblob/issues?q=label%3Afuzzing+)
   against a large corpus of files and firmware images. We rely on up-to-date
   third party dependencies that are
-  [locked](https://github.com/onekey-sec/unblob/blob/main/poetry.lock) to limit
+  [locked](https://github.com/onekey-sec/unblob/blob/main/uv.lock) to limit
   potential supply chain issues. We use safe extractors that we audited and
   fixed where required (see [path traversal in
   ubi_reader](https://github.com/onekey-sec/ubi_reader/commit/4a81f3f0a714bb83d6ee71db09b7748619fa9fb7),
@@ -73,10 +74,10 @@ unblob has been developed with the following objectives in mind:
 
 - **Speed** - we want unblob to be blazing fast, that's why we use
   multi-processing by default, make sure to write efficient code, use
-  memory-mapped files, and use [Hyperscan](https://github.com/intel/hyperscan)
-  as a high-performance matching library. Computation-intensive functions are
-  written in [Rust](https://github.com/onekey-sec/unblob/tree/main/rust) and
-  called from Python using specific bindings.
+  memory-mapped files, and use
+  [Hyperscan](https://github.com/intel/hyperscan) as a
+  high-performance matching library. Computation-intensive functions
+  are written in Rust and called from Python using specific bindings.
 
 ## How does it work?
 
@@ -97,6 +98,15 @@ unblob identifies known and unknown chunks of data within a file:
   extracted content if available (ownership, permissions, timestamps, ...).
 
 ![unblob_architecture.webp](unblob_architecture.webp)
+
+unblob also supports special formats where data is split across multiple files
+like multi-volume archives or data & meta-data formats:
+
+- Special **DirectoryHandler** is responsible to identify the files that make up
+a multi files set.
+
+- Identified MultiFile sets are not carved, but rather directly extracted using
+special **DirectoryExtractor**.
 
 ## Used technologies
 

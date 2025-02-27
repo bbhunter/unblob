@@ -1,27 +1,43 @@
 {
   "nodes": {
-    "flake-utils": {
+    "filter": {
       "locked": {
-        "lastModified": 1659877975,
-        "narHash": "sha256-zllb8aq3YO3h8B/U0/J1WBgAL8EX5yWf5pMj3G0NAmc=",
+        "lastModified": 1731533336,
+        "narHash": "sha256-oRam5PS1vcrr5UPgALW0eo1m/5/pls27Z/pabHNy2Ms=",
         "owner": "numtide",
-        "repo": "flake-utils",
-        "rev": "c0e246b9b83f637f4681389ecabcb2681b4f3af0",
+        "repo": "nix-filter",
+        "rev": "f7653272fd234696ae94229839a99b73c9ab7de0",
         "type": "github"
       },
       "original": {
         "owner": "numtide",
-        "repo": "flake-utils",
+        "repo": "nix-filter",
+        "type": "github"
+      }
+    },
+    "flake-compat": {
+      "flake": false,
+      "locked": {
+        "lastModified": 1733328505,
+        "narHash": "sha256-NeCCThCEP3eCl2l/+27kNNK7QrwZB1IJCrXfrbv5oqU=",
+        "owner": "edolstra",
+        "repo": "flake-compat",
+        "rev": "ff81ac966bb2cae68946d5ed5fc4994f96d0ffec",
+        "type": "github"
+      },
+      "original": {
+        "owner": "edolstra",
+        "repo": "flake-compat",
         "type": "github"
       }
     },
     "nixpkgs": {
       "locked": {
-        "lastModified": 1665634984,
-        "narHash": "sha256-zwXeMc96BD9iFxSB/SLr3dI8iYpqM+seX9qy6bGV+cw=",
+        "lastModified": 1739419412,
+        "narHash": "sha256-NCWZQg4DbYVFWg+MOFrxWRaVsLA7yvRWAf6o0xPR1hI=",
         "owner": "NixOS",
         "repo": "nixpkgs",
-        "rev": "cfea568da97a2668ef3cb3fc42eaacfb0e706807",
+        "rev": "2d55b4c1531187926c2a423f6940b3b1301399b5",
         "type": "github"
       },
       "original": {
@@ -31,47 +47,26 @@
         "type": "github"
       }
     },
-    "poetry2nix": {
-      "inputs": {
-        "flake-utils": "flake-utils",
-        "nixpkgs": [
-          "nixpkgs"
-        ]
-      },
-      "locked": {
-        "lastModified": 1665455310,
-        "narHash": "sha256-gEG1UiKz65SNWDU1NJmxLneo+kn7WjxrfucSk1zhU6o=",
-        "owner": "nix-community",
-        "repo": "poetry2nix",
-        "rev": "d62ba59f1e28c382665c57203a4b9ad11fd7f449",
-        "type": "github"
-      },
-      "original": {
-        "owner": "nix-community",
-        "repo": "poetry2nix",
-        "type": "github"
-      }
-    },
     "root": {
       "inputs": {
+        "filter": "filter",
+        "flake-compat": "flake-compat",
         "nixpkgs": "nixpkgs",
-        "poetry2nix": "poetry2nix",
-        "sasquatch": "sasquatch"
+        "shell-hooks": "shell-hooks"
       }
     },
-    "sasquatch": {
-      "flake": false,
+    "shell-hooks": {
       "locked": {
-        "lastModified": 1646435670,
-        "narHash": "sha256-+4TsIXqKiM4ffDecHpTktuveKZdm7/eKCktHPdqrUKo=",
-        "owner": "onekey-sec",
-        "repo": "sasquatch",
-        "rev": "9298d9addaed3b138b1d08eb4a7780b275c7b8b2",
+        "lastModified": 1740487629,
+        "narHash": "sha256-oFKxRIHhXV9AsmaZCud1CRjcLWpJD++r3j+rQqkNenE=",
+        "owner": "vlaci",
+        "repo": "nix-shell-hooks",
+        "rev": "f025a0c219351e7aa699474743b8e672f114e7c7",
         "type": "github"
       },
       "original": {
-        "owner": "onekey-sec",
-        "repo": "sasquatch",
+        "owner": "vlaci",
+        "repo": "nix-shell-hooks",
         "type": "github"
       }
     }
